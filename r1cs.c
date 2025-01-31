@@ -139,6 +139,7 @@ void print_int64_array(int64_t const *arr, size_t size)
 // matrix represented as 1d array where (i,j)th cell is (matrix + i * cols + j)
 void polx_matmul(polx *result, polx const *matrix, polx const *vector, size_t rows, size_t cols)
 {
+    polxvec_setzero(result, rows);
     for (size_t i = 0; i != rows; i++) {
         for (size_t j = 0; j != cols; j++) {
             polx_mul_add(result + i, matrix + i*cols + j, vector + j);
@@ -150,29 +151,30 @@ void polx_matmul(polx *result, polx const *matrix, polx const *vector, size_t ro
 void matmul_transpose(mpz_t *result, mpz_t *const *matrix, mpz_t const *vector, size_t rows, size_t cols, mpz_t const mod)
 {
     for (size_t i = 0; i != cols; i++) {
-        mpz_init(result[i]);
         mpz_set_ui(result[i], 0);
     }
 
+    mpz_t tmp;
+    mpz_init(tmp);
     for (size_t j = 0; j != cols; j++) {
         for (size_t i = 0; i != rows; i++) {
-            mpz_addmul(result[j], matrix[i][j], vector[i]);
+	    mpz_addmul(result[j], matrix[i][j], vector[i]);
             mpz_mod(result[j], result[j], mod);
         }
     }
+    mpz_clear(tmp);
 }
 
 // result = matrix * vector (mod MOD)
 void matmul(mpz_t *result, mpz_t * const *matrix, mpz_t const * vector, size_t rows, size_t cols, mpz_t const mod)
 {
     for (size_t i = 0; i != rows; i++) {
-        mpz_init(result[i]);
         mpz_set_ui(result[i], 0);
     }
 
     for (size_t i = 0; i != rows; i++) {
         for (size_t j = 0; j != cols; j++) {
-            mpz_addmul(result[i], matrix[i][j], vector[j]);
+	    mpz_addmul(result[i], matrix[i][j], vector[j]);
             mpz_mod(result[i], result[i], mod);
         }
     }
@@ -209,7 +211,7 @@ void lift_to_coeffs(int64_t *coeffs, mpz_t const n)
     }
 
     memcpy(coeffs, naf, N * sizeof *coeffs);
-    // X^{D} == -1
+    // X^{N} == -1
     coeffs[0] -= (naf[N] == 1);
 
 
@@ -224,12 +226,19 @@ void lift_to_coeffs_vector(int64_t *coeffs_vec, mpz_t const *in_vec, size_t n)
     }
 }
 
-void lift_to_polxvec(polx *vec, mpz_t const *in_vec, size_t len)
+void polxvec_frommpzvec(polx *vec, mpz_t const *in_vec, size_t len)
 {
     int64_t *coeffs = _malloc(len*N*sizeof *coeffs);
     lift_to_coeffs_vector(coeffs, in_vec, len);
     polxvec_fromint64vec(vec, len, 1, coeffs);
     free(coeffs);
+
+}
+void polx_frommpz(polx *x, mpz_t const in)
+{
+    int64_t coeffs[N];
+    lift_to_coeffs(coeffs, in);
+    polxvec_fromint64vec(x, 1, 1, coeffs);
 
 }
 
@@ -296,7 +305,7 @@ void polxvec_print_debug(char const *name, polx const *a, size_t len)
 
 }
 
-// window into challenge, both integer forms and polx forms
+// window into challenge
 typedef struct {
     size_t k;
 
@@ -304,27 +313,16 @@ typedef struct {
     mpz_t const *beta;
     mpz_t const *gamma;
     mpz_t const *deltas[ELL];
-
-    polx const *alphax;
-    polx const *betax;
-    polx const *gammax;
-    polx const *deltasx[ELL];
 } chall_view;
 
-void init_chall_view(chall_view *view, mpz_t const *buf, polx const *bufx, size_t k)
+void init_chall_view(chall_view *view, mpz_t const *buf, size_t k)
 {
     view->k = k;
     view->alpha = buf;
     view->beta = view->alpha + view->k;
     view->gamma = view->beta + view->k;
     view->deltas[0] = view->gamma + view->k;
-
-    view->alphax = bufx;
-    view->betax = view->alphax + view->k;
-    view->gammax = view->betax + view->k;
-    view->deltasx[0] = view->gammax + view->k;
     for (size_t i = 1; i != ELL; i++) {
-	view->deltasx[i] = view->deltasx[i-1] + view->k;
 	view->deltas[i] = view->deltas[i-1] + view->k;
     }
 }
@@ -332,9 +330,17 @@ void init_chall_view(chall_view *view, mpz_t const *buf, polx const *bufx, size_
 
 void next_challenge(chall_view *view)
 {
-    init_chall_view(view, view->deltas[ELL-1] + view->k, view->deltasx[ELL-1] + view->k, view->k);
+    init_chall_view(view, view->deltas[ELL-1] + view->k, view->k);
 }
 
+
+mpz_t *new_mpz_array(size_t len) {
+    mpz_t *arr = _malloc(len * sizeof *arr);
+    for (size_t i = 0; i != len; i++) {
+	mpz_init(arr[i]);
+    }
+    return arr;
+}
 
 void free_mpz_array(mpz_t *arr, size_t len)
 {
@@ -355,10 +361,11 @@ void r1cs_reduction(mpz_t **A, mpz_t **B, mpz_t **C, polx *C1, polx *C2, mpz_t *
 {
 
     // compute Aw Bw Cw, store contiguously
-    mpz_t *mat_prods = _malloc(3*k * sizeof *mat_prods);
+    mpz_t *mat_prods = new_mpz_array(3*k);
     matmul(mat_prods, A, w, k, n, mod);
     matmul(mat_prods + k, B, w, k, n, mod);
     matmul(mat_prods + 2*k, C, w, k, n, mod);
+    print_mpz_array(mat_prods, 3*k);
 
     // coefficient vectors for w||Aw||Bw||Cw
     // TODO: include binary check in labrador constraints
@@ -409,10 +416,6 @@ void r1cs_reduction(mpz_t **A, mpz_t **B, mpz_t **C, polx *C1, polx *C2, mpz_t *
         mpz_mod(ds[i], ds[i], mod);
     }
 
-    // polx version of psis, will use later
-    polx *psisx  = _aligned_alloc(64, ELL * k * sizeof *psisx);
-    lift_to_polxvec(psisx, psis, ELL*k);
-
     // coeff vectors of ds[i]
     int64_t *d_coeffs = _malloc(ELL*k*N*sizeof *d_coeffs);
     lift_to_coeffs_vector(d_coeffs, ds, k*ELL);
@@ -447,9 +450,6 @@ void r1cs_reduction(mpz_t **A, mpz_t **B, mpz_t **C, polx *C1, polx *C2, mpz_t *
         mpz_import(challs[i], N/8, 1, 1, 0, 0, hashout2 + i*N/8);
     }
 
-    // polx representation of final challenges
-    polx *challsx = _aligned_alloc(64, k*(ELL+3)*ELL * sizeof *challsx);
-    lift_to_polxvec(challsx, challs, k*(ELL+3)*ELL);
 
     // BEGIN constructing stuff for chihuahua call
 
@@ -507,7 +507,10 @@ void r1cs_reduction(mpz_t **A, mpz_t **B, mpz_t **C, polx *C1, polx *C2, mpz_t *
     mpz_init(eval);
 
     chall_view chall = {};
-    init_chall_view(&chall, challs, challsx, k);
+    init_chall_view(&chall, challs, k);
+
+    // scratch space for mpz operations
+    mpz_t *scratch = new_mpz_array(2*n);
     for (size_t i = 0; i != ELL; i++, next_challenge(&chall)) {
         idx[nz-1] = nz-1+i;
         init_sparsecnst_raw(st.cnst + i, r, nz, idx, wit_lens, 1, true, false);
@@ -524,44 +527,64 @@ void r1cs_reduction(mpz_t **A, mpz_t **B, mpz_t **C, polx *C1, polx *C2, mpz_t *
 
         // \phi_0^{(i)} = A^T \alpha^{(i)} + B^T \beta^{(i)} + C^T \gamma^{(i)}
         // corresponds to wt.s[0] = w
-        mpz_t *result = _malloc(3 * n * sizeof *result);
-        matmul_transpose(result, A, chall.alpha, k, n, mod);
-        matmul_transpose(result + n, B, chall.beta, k, n, mod);
-        matmul_transpose(result + 2*n, C, chall.gamma, k, n, mod);
+        matmul_transpose(scratch, A, chall.alpha, k, n, mod);
+        matmul_transpose(scratch + n, B, chall.beta, k, n, mod);
+	for (size_t j = 0; j != n; j++) {
+	    mpz_add(scratch[j], scratch[j], scratch[j+n]);
+	}
+        matmul_transpose(scratch + n, C, chall.gamma, k, n, mod);
+	for (size_t j = 0; j != n; j++) {
+	    mpz_add(scratch[j], scratch[j], scratch[j+n]);
+	    mpz_mod(scratch[j], scratch[j], mod);
+	}
 
-        for (size_t j = 0; j != n; j++) {
-            mpz_add(result[j], result[j], result[n+j]);
-            mpz_add(result[j], result[j], result[2*n+j]);
-            mpz_mod(result[j], result[j], mod);
-        }
-
-        lift_to_polxvec(st.cnst[i].phi[0], result, n);
-        free_mpz_array(result, 3*n);
+        polxvec_frommpzvec(st.cnst[i].phi[0], scratch, n);
 
         // phi_1^{(i)} = -\alpha^{(i)} + \sum_{j=0}^l psi_i \circ \delta_j^{(i)}
         // corresponds to wt.s[1] = a = Aw
-        polxvec_neg(st.cnst[i].phi[1], chall.alphax, k);
+	for (size_t j = 0; j != k; j++) {
+	    mpz_neg(scratch[0], chall.alpha[j]);
+	    for (size_t z = 0; z != ELL; z++) {
+		mpz_addmul(scratch[0], psis[i*k+j], chall.deltas[z][j]);
+		mpz_mod(scratch[0], scratch[0], mod);
+	    }
+	    polx_frommpz(st.cnst[i].phi[1] + j, scratch[0]);
+	}
 
-        for (size_t j = 0; j != ELL; j++) {
-            polxvec_mul_add(st.cnst[i].phi[1], psisx + i*k, chall.deltasx[j], k);
-        }
 
         // phi_2^{(i)} = -\beta^{i}
         // corresponds to wt.s[2] = b = Bw
-        polxvec_neg(st.cnst[i].phi[2], chall.betax, k);
+	for (size_t j = 0; j != k; j++) {
+	    mpz_neg(scratch[0], chall.beta[j]);
+	    mpz_mod(scratch[0], scratch[0], mod);
+	    polx_frommpz(st.cnst[i].phi[2] + j, scratch[0]);
+	}
 
         // phi_3^{(i)} = -\gamma^{(i)} - \psi_i
         // corresponds to wt.s[3] = c = Cw
-        polxvec_neg(st.cnst[i].phi[3], chall.gammax, k);
-        polxvec_sub(st.cnst[i].phi[3], st.cnst[i].phi[3], psisx + i*k, k);
+	for (size_t j = 0; j != k; j++) {
+	    mpz_neg(scratch[0], chall.gamma[j]);
+	    mpz_sub(scratch[0], scratch[0], psis[i*k+j]);
+	    mpz_mod(scratch[0], scratch[0], mod);
+	    polx_frommpz(st.cnst[i].phi[3] + j, scratch[0]);
+	}
 
         // \phi_{4} = -\sum_{i=0}^l \delta^{(i)_j}
         // corresponds to wt.s[4+i] = d_i
-        polxvec_neg(st.cnst[i].phi[4], chall.deltasx[0], k);
+	// TODO compute sum of deltas earlier and re-use
+	for (size_t j = 0; j != k; j++) {
+	    mpz_neg(scratch[0], chall.deltas[0][j]);
+	    for (size_t z = 1; z != ELL; z++) {
+		mpz_sub(scratch[0], scratch[0], chall.deltas[z][j]);
+	    }
+	    mpz_mod(scratch[0], scratch[0], mod);
+	    polx_frommpz(st.cnst[i].phi[4] + j, scratch[0]);
+	}
+        //polxvec_neg(st.cnst[i].phi[4], chall.deltasx[0], k);
 
-        for (size_t j = 1; j != ELL; j++) {
-            polxvec_sub(st.cnst[i].phi[4], st.cnst[i].phi[4], chall.deltasx[j], k);
-        }
+        //for (size_t j = 1; j != ELL; j++) {
+        //    polxvec_sub(st.cnst[i].phi[4], st.cnst[i].phi[4], chall.deltasx[j], k);
+        //}
 
         // set st.cnst[i].b to whatever it actually evaluates to
         sparsecnst_eval(st.cnst[i].b, &st.cnst[i], sx, &wt);
@@ -574,6 +597,7 @@ void r1cs_reduction(mpz_t **A, mpz_t **B, mpz_t **C, polx *C1, polx *C2, mpz_t *
         polx_eval(eval, st.cnst[i].b, 2, mod);
         assert(mpz_sgn(eval) == 0);
     }
+    free_mpz_array(scratch, 2*n);
     mpz_clear(eval);
 
     print_prncplstmnt_pp(&st);
@@ -637,6 +661,7 @@ int main(void)
     mpz_t mod;
     mpz_init(mod);
     mpz_set_str(mod, MOD_STR, 10);
+
 
     polx *comm = _aligned_alloc(64, ((3*k+n)*m + md * ELL*k) * sizeof *comm);
 
