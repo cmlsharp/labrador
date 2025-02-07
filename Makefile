@@ -2,9 +2,9 @@ CC = /usr/bin/clang
 DBGFLAGS = -std=c2x -Wall -Wextra -Wmissing-prototypes -Wredundant-decls -Wno-missing-prototypes\
   -Wshadow -Wpointer-arith -Wno-unused-function -flto=auto \
   -fwrapv -march=native -mtune=native -O0 -ggdb -fsanitize=undefined -fno-omit-frame-pointer
-CFLAGS += -std=c2x -Wall -Wextra -Wmissing-prototypes -Wredundant-decls \
+CFLAGS += -std=c2x -Wall -Wextra -Wredundant-decls \
   -Wshadow -Wpointer-arith -Wno-unused-function -flto=auto \
-  -fwrapv -march=native -mtune=native -O3
+  -fwrapv -march=native -mtune=native -O3 -pg
 RM = /bin/rm
 
 SOURCES = pack.c greyhound.c dachshund.c chihuahua.c labrador.c \
