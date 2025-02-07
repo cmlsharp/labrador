@@ -668,7 +668,7 @@ void r1cs_reduction(mpz_t **A, mpz_t **B, mpz_t **C, polx *C1[4], polx *C2[4], m
         polx_eval(eval, &g, 2, mod);
         assert(mpz_sgn(eval) == 0);
     }
-    free_mpz_array(scratch, 2*n);
+    free_mpz_array(scratch, n);
     mpz_clear(eval);
 
     print_prncplstmnt_pp(&st);
