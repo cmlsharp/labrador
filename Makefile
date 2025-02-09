@@ -1,8 +1,8 @@
 CC = /usr/bin/clang
 DBGFLAGS = -std=c2x -Wall -Wextra -Wmissing-prototypes -Wredundant-decls -Wno-missing-prototypes\
   -Wshadow -Wpointer-arith -Wno-unused-function -flto=auto \
-  -fwrapv -march=native -mtune=native -O0 -ggdb -fsanitize=undefined -fno-omit-frame-pointer
-CFLAGS += -std=c2x -Wall -Wextra -Wredundant-decls \
+  -fwrapv -march=native -mtune=native -O0 -ggdb -fsanitize=undefined -fsanitize=address -fno-omit-frame-pointer
+CFLAGS = -std=c2x -Wall -Wextra -Wredundant-decls \
   -Wshadow -Wpointer-arith -Wno-unused-function -flto=auto \
   -fwrapv -march=native -mtune=native -O3 -pg
 RM = /bin/rm
@@ -45,7 +45,7 @@ test_jlproj: test_jlproj.c data.c data.h jlproj.c jlproj.h polx.c polx.h poly.c 
 	$(CC) $(CFLAGS) test_jlproj.c jlproj.c data.c polx.c poly.c polz.c ntt.S invntt.S aesctr.c fips202.c randombytes.c cpucycles.c -o test_jlproj -lm
 
 test_chihuahua: test_chihuahua.c $(SOURCES) $(HEADERS)
-	$(CC) $(DBGFLAGS) test_chihuahua.c $(SOURCES) -o $@ -lm
+	$(CC) $(CFLAGS) test_chihuahua.c $(SOURCES) -o $@ -lm
 
 test_dachshund: test_dachshund.c $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) test_dachshund.c $(SOURCES) -o $@ -lm
@@ -54,7 +54,7 @@ test_greyhound: test_greyhound.c $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) test_greyhound.c $(SOURCES) -o $@ -lm
 
 r1cs: r1cs.c $(SOURCES) $(HEADERS)
-	$(CC) $(DBGFLAGS) r1cs.c $(SOURCES) -o $@ -lm -lgmp
+	$(CC) $(DBGFLAGS) r1cs.c $(SOURCES) -o $@ -lm -lgmp -g
 
 libdogs.so: $(SOURCES) $(HEADERS)
 	$(CC) -shared -fPIC -fvisibility=hidden $(CFLAGS) -o $@ $(SOURCES)
