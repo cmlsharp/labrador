@@ -196,6 +196,7 @@ void add_entry_ui(mpz_sparsemat *mat, size_t row, size_t col, unsigned long val)
     mat->len++;
 }
 
+// result += matrix * vector (mod mod)
 void sparsematmul_add(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vector, mpz_t const mod)
 {
     for (size_t i = 0; i < mat->len; i++) {
@@ -206,15 +207,17 @@ void sparsematmul_add(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vect
     }
 }
 
+// result = matrix * vector (mod mod)
 void sparsematmul(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vector, size_t nrows, mpz_t const mod)
 {
     for (size_t i = 0; i != nrows; i++) {
-	mpz_init_set_ui(result[i], 0);
+	mpz_set_ui(result[i], 0);
     }
     sparsematmul_add(result, mat, vector, mod);
 }
 
 
+// result += matrix^T*vector (mod mod)
 void sparsematmul_trans_add(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vector, mpz_t const mod)
 {
     for (size_t i = 0; i < mat->len; i++) {
@@ -225,6 +228,7 @@ void sparsematmul_trans_add(mpz_t *result, mpz_sparsemat const *mat, mpz_t const
     }
 }
 
+// result = matrix^T * vector (mod mod)
 void sparsematmul_trans(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vector, size_t ncols, mpz_t const mod)
 {
     for (size_t i = 0; i != ncols; i++) {
@@ -344,29 +348,6 @@ void polxvec_bitpack(uint8_t *r, polx const *a, size_t len)
 }
 
 // TODO: get rid of this values < 2**d+1 have enough entropy for challenges
-void rejection_sample(mpz_t *out, size_t n, mpz_t const mod, mpz_t cutoff, size_t len, shake128incctx *ctx)
-{
-    size_t i = 0;
-
-    uint8_t *hashout = _malloc(len);
-    mpz_t temp;
-    mpz_init(temp);
-
-    while (i != n) {
-        shake128_inc_squeeze(hashout, len, ctx);
-
-        if (mpz_cmp(temp, cutoff) < 0) {
-            mpz_init(out[i]);
-            mpz_mod(out[i], temp, mod);
-            i++;
-        }
-    }
-
-    mpz_clear(temp);
-    free(hashout);
-}
-
-
 //void polx_print_eval(char const *fmt, polx *a, int64_t x, ...)
 //{
 //    va_list args;
@@ -449,6 +430,15 @@ void free_mpz_array(mpz_t *arr, size_t len)
     free(arr);
 }
 
+void squeeze_challenges(mpz_t *result, size_t count, shake128incctx *shakectx)
+{
+    uint8_t buf[N/8];
+    for (size_t i = 0; i != count; i++) {
+	shake128_inc_squeeze(buf, N/8, shakectx);
+        mpz_import(result[i], N/8, 1, 1, 0, 0, buf);
+    }
+}
+
 // generate proof for Aw \circ Bw = Cw (mod 'mod')
 // C1 and C2 are commitment matrices.
 // A,B,C have dimension k x n
@@ -493,12 +483,12 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     shake128incctx shakectx;
     shake128_inc_init(&shakectx);
 
+    // TODO also hash public params
     size_t hashbuf_size = MAX(m,md)*N*QBYTES;
     uint8_t *hashbuf = _aligned_alloc(16, hashbuf_size);
     polxvec_bitpack(hashbuf, commitments, m);
 
     shake128_inc_absorb(&shakectx, hashbuf, N*QBYTES*m);
-    // TODO also hash public params
 
     // keep old hash ctx around for future absorbing
     shake128incctx tmp_ctx = shakectx;
@@ -506,14 +496,11 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
     // verifier challenge
     mpz_t *psis = new_mpz_array(ELL*k);
+    squeeze_challenges(psis, ELL*k, &tmp_ctx);
+
     // ds[i] = psi[i] * Aw[i]
     mpz_t *ds = new_mpz_array(ELL*k);
-
-    // bytes of integer extracted from hash
-    uint8_t chall_bytes_buf[N/8];
     for (size_t i = 0; i != ELL*k; i++) {
-	shake128_inc_squeeze(chall_bytes_buf, N/8, &tmp_ctx);
-        mpz_import(psis[i], N/8, 1, 1, 0, 0, chall_bytes_buf);
         mpz_mul(ds[i], psis[i], mat_prods[i % k]);
         mpz_mod(ds[i], ds[i], mod);
     }
@@ -552,11 +539,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
     // final challenges
     mpz_t *challs = new_mpz_array(chall_size*ELL);
-
-    for (size_t i = 0; i != chall_size*ELL; i++) {
-	shake128_inc_squeeze(chall_bytes_buf, N/8, &tmp_ctx);
-        mpz_import(challs[i], N/8, 1, 1, 0, 0, chall_bytes_buf);
-    }
+    squeeze_challenges(challs, chall_size*ELL, &tmp_ctx);
 
     // BEGIN constructing stuff for chihuahua call
 
@@ -572,16 +555,15 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     }
 
     witness wt = {};
-    init_witness_half(&wt, r, wit_lens);
+    init_witness_raw_buf(&wt, r, wit_lens, wit_vecs);
+    wit_vecs = NULL;
 
     // polx version of wt.s already have this as wit_vecsx, but need it in 2d array form
     polx *sx[r];
 
-    wt.s[0] = wit_vecs;
     sx[0] = wit_vecsx;
     wt.normsq[0] = polyvec_sprodz(wt.s[0], wt.s[0], wit_lens[0]);
     for (size_t i = 1; i != r; i++) {
-        wt.s[i] = wt.s[i-1] + wit_lens[i-1];
         wt.normsq[i] = polyvec_sprodz(wt.s[i], wt.s[i], wit_lens[i]);
         sx[i] = sx[i-1] + wit_lens[i-1];
     }
@@ -711,7 +693,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         // this should pass trivially because of how we set st.cnst[i].b
         assert(sparsecnst_check(st.cnst +i, sx, &wt));
 
-	// The verifier will check the following: (st.cnst[i].b - <commitment1, \epsilon> - <commitment2, \zeta>)(2) mod 2**N + 1 == 0
+	// The verifier will check the following: (st.cnst[i].b - <commitment1, \epsilon^(i)> - <commitment2, \zeta^(i)>)(2) mod 2**N + 1 == 0
 	// (and that st.cnst[i].b is computed correctly, via labrador)
 	polx g;
 	polxvec_sprod(&g, commitments, epsilonx, m);

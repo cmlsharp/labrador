@@ -353,7 +353,7 @@ void free_statement(statement *st) {
   st->u1 = NULL;
 }
 
-size_t init_witness_half(witness *wt, size_t r, const size_t n[r]) {
+void init_witness_raw_buf(witness *wt, size_t r, const size_t n[r], poly *s_buf) {
   size_t i, len;
   void *buf;
 
@@ -369,20 +369,19 @@ size_t init_witness_half(witness *wt, size_t r, const size_t n[r]) {
     wt->n[i] = n[i];
     len += n[i];
   }
-  return len;
 
+  if (!s_buf) {
+    s_buf = _aligned_alloc(64, len*sizeof(poly));
+  }
+
+  for (i=0;i<r;i++)  {
+    wt->s[i] = s_buf;
+    s_buf += n[i];
+  }
 }
 
 void init_witness_raw(witness *wt, size_t r, const size_t n[r]) {
-  size_t len, i;
-  poly *buf; 
-
-  len = init_witness_half(wt, r, n);
-  buf = _aligned_alloc(64,len*sizeof(poly));
-  for(i=0;i<r;i++) {
-    wt->s[i] = buf;
-    buf += n[i];
-  }
+    init_witness_raw_buf(wt, r, n, NULL);
 }
 
 void init_witness(witness *wt, const statement *st) {

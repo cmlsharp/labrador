@@ -79,9 +79,9 @@ int init_proof(proof *pi, const witness *wt, int quadratic, int tail);
 void init_constraint_raw(constraint *cnst, size_t r, size_t n, size_t deg, int quadratic);
 void init_constraint(constraint *cnst, const statement *st);
 void init_statement(statement *st, const proof *pi, const uint8_t h[16]);
-#define init_witness_half NAMESPACE(init_witness_half)
+#define init_witness_raw_buf NAMESPACE(init_witness_raw_buf)
 __attribute__((visibility("default")))
-size_t init_witness_half(witness *wt, size_t r, const size_t n[r]);
+void init_witness_raw_buf(witness *wt, size_t r, const size_t n[r], poly *s_buf);
 #define init_witness_raw NAMESPACE(init_witness_raw)
 __attribute__((visibility("default")))
 void init_witness_raw(witness *wt, size_t r, const size_t n[r]);
