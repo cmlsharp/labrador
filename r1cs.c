@@ -580,13 +580,9 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polx onex;
     polx_frompoly(&onex, &one);
 
-    // for each sparse constraint there are 5 non-zero linear constraints
-    // 1 for w, a = Aw, b = Bw, c = Cw and exactly one of the d_i = psi * a[i]s
-    size_t nz = r;
-
-    size_t idx[nz];
+    size_t idx[r];
     // only the idx[4] changes across sparse cnsts, all others are the same
-    for (size_t i = 0; i != nz; i++) {
+    for (size_t i = 0; i != r; i++) {
         idx[i] = i;
     }
 
@@ -607,7 +603,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polx *zetax = _aligned_alloc(64, md * sizeof *epsilonx);
 
     for (size_t i = 0; i != ELL; i++, next_challenge(&chall)) {
-        init_sparsecnst_raw(st.cnst + i, r, nz, idx, wit_lens, 1, true, false);
+        init_sparsecnst_raw(st.cnst + i, r, r, idx, wit_lens, 1, true, false);
 
         // QUADRATIC constraints
         // 1 * <b, d_i>
@@ -688,13 +684,13 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         // set st.cnst[i].b to whatever it actually evaluates to
         sparsecnst_eval(st.cnst[i].b, &st.cnst[i], sx, &wt);
 
-        sparsecnst_hash(st.h, st.cnst + i, nz, wit_lens, 1);
+        sparsecnst_hash(st.h, st.cnst + i, r, wit_lens, 1);
 
         // this should pass trivially because of how we set st.cnst[i].b
         assert(sparsecnst_check(st.cnst +i, sx, &wt));
 
 	// The verifier will check the following: (st.cnst[i].b - <commitment1, \epsilon^(i)> - <commitment2, \zeta^(i)>)(2) mod 2**N + 1 == 0
-	// (and that st.cnst[i].b is computed correctly, via labrador)
+	// (and that st.cnst[i].b is computed correctly, via chihuahua/labrador)
 	polx g;
 	polxvec_sprod(&g, commitments, epsilonx, m);
 	polxvec_sprod_add(&g, commitment2, zetax, md);
