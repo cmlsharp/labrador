@@ -27,20 +27,21 @@ const char *MOD_STR = "18446744073709551617";
 #define INT_BYTES CEILDIV(N+1,8)
 
 
-void poly_print(const poly *a, const char *fmt, ...) {
-  size_t i;
+void poly_print(const poly *a, const char *fmt, ...)
+{
+    size_t i;
 
-  va_list args;
-  va_start(args, fmt);
-  vprintf(fmt, args);
-  printf(" = np.array([");
-  for(i=0;i<N;i++) {
-    //printf("%2zu: ",i);
-    printf("%d, ",a->vec->c[i]);
-    //printf("\n");
-  }
-  printf("], dtype='object')\n");
-  va_end(args);
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    printf(" = np.array([");
+    for(i=0; i<N; i++) {
+        //printf("%2zu: ",i);
+        printf("%d, ",a->vec->c[i]);
+        //printf("\n");
+    }
+    printf("], dtype='object')\n");
+    va_end(args);
 }
 
 
@@ -171,7 +172,7 @@ void init_mpz_sparsemat(mpz_sparsemat *mat, size_t cap)
 void free_mpz_sparsemat(mpz_sparsemat *mat)
 {
     for (size_t i = 0; i != mat->len; i++) {
-	mpz_clear(mat->entries[i]);
+        mpz_clear(mat->entries[i]);
     }
     free(mat->rows);
     free(mat->cols);
@@ -200,10 +201,10 @@ void add_entry_ui(mpz_sparsemat *mat, size_t row, size_t col, unsigned long val)
 void sparsematmul_add(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vector, mpz_t const mod)
 {
     for (size_t i = 0; i < mat->len; i++) {
-	size_t row = mat->rows[i];
-	size_t col = mat->cols[i];
-	mpz_addmul(result[row], mat->entries[i], vector[col]);
-	mpz_mod(result[row], result[row], mod);
+        size_t row = mat->rows[i];
+        size_t col = mat->cols[i];
+        mpz_addmul(result[row], mat->entries[i], vector[col]);
+        mpz_mod(result[row], result[row], mod);
     }
 }
 
@@ -211,7 +212,7 @@ void sparsematmul_add(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vect
 void sparsematmul(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vector, size_t nrows, mpz_t const mod)
 {
     for (size_t i = 0; i != nrows; i++) {
-	mpz_set_ui(result[i], 0);
+        mpz_set_ui(result[i], 0);
     }
     sparsematmul_add(result, mat, vector, mod);
 }
@@ -221,10 +222,10 @@ void sparsematmul(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vector, 
 void sparsematmul_trans_add(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vector, mpz_t const mod)
 {
     for (size_t i = 0; i < mat->len; i++) {
-	size_t row = mat->rows[i];
-	size_t col = mat->cols[i];
-	mpz_addmul(result[col], mat->entries[i], vector[row]);
-	mpz_mod(result[col], result[col], mod);
+        size_t row = mat->rows[i];
+        size_t col = mat->cols[i];
+        mpz_addmul(result[col], mat->entries[i], vector[row]);
+        mpz_mod(result[col], result[col], mod);
     }
 }
 
@@ -232,7 +233,7 @@ void sparsematmul_trans_add(mpz_t *result, mpz_sparsemat const *mat, mpz_t const
 void sparsematmul_trans(mpz_t *result, mpz_sparsemat const *mat, mpz_t const *vector, size_t ncols, mpz_t const mod)
 {
     for (size_t i = 0; i != ncols; i++) {
-	mpz_set_ui(result[i], 0);
+        mpz_set_ui(result[i], 0);
     }
     sparsematmul_trans_add(result, mat, vector, mod);
 }
@@ -401,7 +402,7 @@ void init_chall_view(chall_view *view, mpz_t const *buf, size_t k, size_t m, siz
     view->gamma = view->beta + view->k;
     view->deltas[0] = view->gamma + view->k;
     for (size_t i = 1; i != ELL; i++) {
-	view->deltas[i] = view->deltas[i-1] + view->k;
+        view->deltas[i] = view->deltas[i-1] + view->k;
     }
     view->epsilon = view->deltas[ELL-1] + view->k;
     view->zeta = view->epsilon + view->m;
@@ -414,10 +415,11 @@ void next_challenge(chall_view *view)
 }
 
 
-mpz_t *new_mpz_array(size_t len) {
+mpz_t *new_mpz_array(size_t len)
+{
     mpz_t *arr = _malloc(len * sizeof *arr);
     for (size_t i = 0; i != len; i++) {
-	mpz_init(arr[i]);
+        mpz_init(arr[i]);
     }
     return arr;
 }
@@ -434,7 +436,7 @@ void squeeze_challenges(mpz_t *result, size_t count, shake128incctx *shakectx)
 {
     uint8_t buf[N/8];
     for (size_t i = 0; i != count; i++) {
-	shake128_inc_squeeze(buf, N/8, shakectx);
+        shake128_inc_squeeze(buf, N/8, shakectx);
         mpz_import(result[i], N/8, 1, 1, 0, 0, buf);
     }
 }
@@ -477,7 +479,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polx_matmul(commitments, C1[0], wit_vecsx, m, n);
 
     for (size_t i = 1; i != 4; i++) {
-	polx_matmul_add(commitments, C1[i], wit_vecsx + n + ((i-1)*k), m, k);
+        polx_matmul_add(commitments, C1[i], wit_vecsx + n + ((i-1)*k), m, k);
     }
 
     shake128incctx shakectx;
@@ -523,7 +525,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polx *commitment2 = commitments + m;
     polxvec_setzero(commitment2, md);
     for (size_t i = 0; i != ELL; i++) {
-	polx_matmul_add(commitment2, C2[i], wit_vecsx2 + i*k, md, k);
+        polx_matmul_add(commitment2, C2[i], wit_vecsx2 + i*k, md, k);
     }
 
 
@@ -614,72 +616,72 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
 
 
-	// LINEAR constraints
-	polxvec_frommpzvec(epsilonx, chall.epsilon, m);
-	polxvec_frommpzvec(zetax, chall.zeta, md);
-	for (size_t j = 0; j != k; j++) {
-	    mpz_set(deltasum[j], chall.deltas[0][j]);
-	    for (size_t z = 1; z != ELL; z++) {
-		mpz_add(deltasum[j], deltasum[j], chall.deltas[z][j]);
-	    }
-	    mpz_mod(deltasum[j], deltasum[j], mod);
-	}
+        // LINEAR constraints
+        polxvec_frommpzvec(epsilonx, chall.epsilon, m);
+        polxvec_frommpzvec(zetax, chall.zeta, md);
+        for (size_t j = 0; j != k; j++) {
+            mpz_set(deltasum[j], chall.deltas[0][j]);
+            for (size_t z = 1; z != ELL; z++) {
+                mpz_add(deltasum[j], deltasum[j], chall.deltas[z][j]);
+            }
+            mpz_mod(deltasum[j], deltasum[j], mod);
+        }
 
         // \phi_0^{(i)} = A^T \alpha^{(i)} + B^T \beta^{(i)} + C^T \gamma^{(i)} + C1[0]^T \epsilon
         // corresponds to wt.s[0] = w
         sparsematmul_trans(scratch, A, chall.alpha, n, mod);
-	sparsematmul_trans_add(scratch, B, chall.beta, mod);
-	sparsematmul_trans_add(scratch, C, chall.gamma, mod);
+        sparsematmul_trans_add(scratch, B, chall.beta, mod);
+        sparsematmul_trans_add(scratch, C, chall.gamma, mod);
 
         polxvec_frommpzvec(st.cnst[i].phi[0], scratch, n);
-	polx_matmul_trans_add(st.cnst[i].phi[0], C1[0], epsilonx, m, n);
-	
+        polx_matmul_trans_add(st.cnst[i].phi[0], C1[0], epsilonx, m, n);
+
 
         // phi_1^{(i)} = -\alpha^{(i)} + \sum_{j=0}^l psi_i \circ \delta_j^{(i)} + C1[1]^t \epsilon
         // corresponds to wt.s[1] = a = Aw
-	for (size_t j = 0; j != k; j++) {
-	    mpz_mul(scratch[0], psis[i*k+j], deltasum[j]);
-	    mpz_sub(scratch[0], scratch[0], chall.alpha[j]);
-	    mpz_mod(scratch[0], scratch[0], mod);
-	    polx_frommpz(st.cnst[i].phi[1] + j, scratch[0]);
-	}
-	polx_matmul_trans_add(st.cnst[i].phi[1], C1[1], epsilonx, m, k);
+        for (size_t j = 0; j != k; j++) {
+            mpz_mul(scratch[0], psis[i*k+j], deltasum[j]);
+            mpz_sub(scratch[0], scratch[0], chall.alpha[j]);
+            mpz_mod(scratch[0], scratch[0], mod);
+            polx_frommpz(st.cnst[i].phi[1] + j, scratch[0]);
+        }
+        polx_matmul_trans_add(st.cnst[i].phi[1], C1[1], epsilonx, m, k);
 
 
         // phi_2^{(i)} = -\beta^{i} + C1[2]^t \epsilon
         // corresponds to wt.s[2] = b = Bw
-	for (size_t j = 0; j != k; j++) {
-	    mpz_neg(scratch[0], chall.beta[j]);
-	    mpz_mod(scratch[0], scratch[0], mod);
-	    polx_frommpz(st.cnst[i].phi[2] + j, scratch[0]);
-	}
-	polx_matmul_trans_add(st.cnst[i].phi[2], C1[2], epsilonx, m, k);
+        for (size_t j = 0; j != k; j++) {
+            mpz_neg(scratch[0], chall.beta[j]);
+            mpz_mod(scratch[0], scratch[0], mod);
+            polx_frommpz(st.cnst[i].phi[2] + j, scratch[0]);
+        }
+        polx_matmul_trans_add(st.cnst[i].phi[2], C1[2], epsilonx, m, k);
 
         // phi_3^{(i)} = -\gamma^{(i)} - \psi_i + C1[3]^t \epsilon
         // corresponds to wt.s[3] = c = Cw
-	for (size_t j = 0; j != k; j++) {
-	    mpz_neg(scratch[0], chall.gamma[j]);
-	    mpz_sub(scratch[0], scratch[0], psis[i*k+j]);
-	    mpz_mod(scratch[0], scratch[0], mod);
-	    polx_frommpz(st.cnst[i].phi[3] + j, scratch[0]);
-	}
-	polx_matmul_trans_add(st.cnst[i].phi[3], C1[3], epsilonx, m, k);
-	
+        for (size_t j = 0; j != k; j++) {
+            mpz_neg(scratch[0], chall.gamma[j]);
+            mpz_sub(scratch[0], scratch[0], psis[i*k+j]);
+            mpz_mod(scratch[0], scratch[0], mod);
+            polx_frommpz(st.cnst[i].phi[3] + j, scratch[0]);
+        }
+        polx_matmul_trans_add(st.cnst[i].phi[3], C1[3], epsilonx, m, k);
 
-	// for all j != i \in [ELL] \phi_{4+j}^((i)} = C2[j]^t \zeta^{(i)}
-	// \phi_{4+i}^{(i)} = C2[i]^t \zeta^{(i)} - \sum_{j=0}^ELL \delta^{(i)}_j
-	// corresponds to wt.s[4+i] = d_i = \psi_i \circ a = \psi_i \circ Aw
-	for (size_t j = 0; j != ELL; j++) {
-	    polx_matmul_trans(st.cnst[i].phi[4+j], C2[j], zetax, md, k);
-	}
 
-	for (size_t j = 0; j != k; j++) {
-	    // -deltasum
-	    mpz_sub(scratch[0], mod, deltasum[j]);
-	    polx tmp;
-	    polx_frommpz(&tmp, scratch[0]);
-	    polx_add(st.cnst[i].phi[4+i] + j, st.cnst[i].phi[4+i] + j, &tmp);
-	}
+        // for all j != i \in [ELL] \phi_{4+j}^((i)} = C2[j]^t \zeta^{(i)}
+        // \phi_{4+i}^{(i)} = C2[i]^t \zeta^{(i)} - \sum_{j=0}^ELL \delta^{(i)}_j
+        // corresponds to wt.s[4+i] = d_i = \psi_i \circ a = \psi_i \circ Aw
+        for (size_t j = 0; j != ELL; j++) {
+            polx_matmul_trans(st.cnst[i].phi[4+j], C2[j], zetax, md, k);
+        }
+
+        for (size_t j = 0; j != k; j++) {
+            // -deltasum
+            mpz_sub(scratch[0], mod, deltasum[j]);
+            polx tmp;
+            polx_frommpz(&tmp, scratch[0]);
+            polx_add(st.cnst[i].phi[4+i] + j, st.cnst[i].phi[4+i] + j, &tmp);
+        }
 
         // set st.cnst[i].b to whatever it actually evaluates to
         sparsecnst_eval(st.cnst[i].b, &st.cnst[i], sx, &wt);
@@ -689,12 +691,12 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         // this should pass trivially because of how we set st.cnst[i].b
         assert(sparsecnst_check(st.cnst +i, sx, &wt));
 
-	// The verifier will check the following: (st.cnst[i].b - <commitment1, \epsilon^(i)> - <commitment2, \zeta^(i)>)(2) mod 2**N + 1 == 0
-	// (and that st.cnst[i].b is computed correctly, via chihuahua/labrador)
-	polx g;
-	polxvec_sprod(&g, commitments, epsilonx, m);
-	polxvec_sprod_add(&g, commitment2, zetax, md);
-	polx_sub(&g, st.cnst[i].b, &g);
+        // The verifier will check the following: (st.cnst[i].b - <commitment1, \epsilon^(i)> - <commitment2, \zeta^(i)>)(2) mod 2**N + 1 == 0
+        // (and that st.cnst[i].b is computed correctly, via chihuahua/labrador)
+        polx g;
+        polxvec_sprod(&g, commitments, epsilonx, m);
+        polxvec_sprod_add(&g, commitment2, zetax, md);
+        polx_sub(&g, st.cnst[i].b, &g);
         polx_eval(eval, &g, 2, mod);
         assert(mpz_sgn(eval) == 0);
     }
@@ -732,21 +734,21 @@ int main(void)
     size_t m = 3;
     size_t md = 3;
 
-    
+
     mpz_t *w = new_mpz_array(n);
     for (size_t i = 0; i != n; i++) {
         mpz_set_ui(w[i], i);
     }
-    
+
     mpz_sparsemat A, B, C;
     init_mpz_sparsemat(&A, n);
     init_mpz_sparsemat(&B, n);
     init_mpz_sparsemat(&C, n);
 
     for (size_t i = 0; i != n; i++) {
-	add_entry_ui(&A, i, i, 1);
-	add_entry_ui(&B, i, i, 1);
-	add_entry(&C, i, i, w[i]);
+        add_entry_ui(&A, i, i, 1);
+        add_entry_ui(&B, i, i, 1);
+        add_entry(&C, i, i, w[i]);
     }
 
 
@@ -765,14 +767,14 @@ int main(void)
     C1[0] = comm;
     C1[1] = comm + n*m;
     for (size_t i = 2; i != 4; i++) {
-	C1[i] = C1[i-1] + k*m;
+        C1[i] = C1[i-1] + k*m;
     }
     polx const *C2[ELL];
     C2[0] = comm + (3*k+n)*m;
     for (size_t i = 1; i != ELL; i++) {
-	C2[i] = C2[i-1] + k*md;
+        C2[i] = C2[i-1] + k*md;
     }
-    
+
     r1cs_reduction(&A, &B, &C, C1, C2, w, mod, k, n, m, md);
     free_mpz_sparsemat(&A);
     free_mpz_sparsemat(&B);
