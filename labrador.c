@@ -29,10 +29,10 @@ static size_t triangularidx(size_t i,size_t j,size_t r) {
   return i;
 }
 
-int sis_secure(size_t rank, double norm) {
+int sis_secure(size_t rank, double norm, double logdelta) {
   double maxlog;
 
-  maxlog = 2*sqrt(LOGQ*LOGDELTA*N)*sqrt(rank);
+  maxlog = 2*sqrt(LOGQ*logdelta*N)*sqrt(rank);
   maxlog = MIN(LOGQ,maxlog);
   if(log2(norm) < maxlog)
     return 1;
@@ -135,7 +135,7 @@ int init_proof(proof *pi, const witness *wt, int quadratic, int tail) {
       varz += normsq[i];
     varz /= nn*N;
     varz *= TAU1+4*TAU2;
-    decompose = !tail && !sis_secure(13,6*T*SLACK*sqrt(2*(TAU1+4*TAU2)*varz*nn*N));
+    decompose = !tail && !sis_secure(13,6*T*SLACK*sqrt(2*(TAU1+4*TAU2)*varz*nn*N),LOGDELTA);
     decompose = decompose || 64*varz > (1 << 28);
     if(decompose) {
       cpp->f = 2;
@@ -196,13 +196,13 @@ int init_proof(proof *pi, const witness *wt, int quadratic, int tail) {
       if(!tail && quadratic)
         pi->normsq += (ldexp(1,2*cpp->bg)/12*(cpp->fg-1) + varg/ldexp(1,2*(cpp->fg-1)*cpp->bg))*(rr*rr+rr)/2;
       pi->normsq *= N;
-      if(sis_secure(cpp->kappa,6*T*SLACK*ldexp(1,(cpp->f-1)*cpp->b)*sqrt(pi->normsq)))
+      if(sis_secure(cpp->kappa,6*T*SLACK*ldexp(1,(cpp->f-1)*cpp->b)*sqrt(pi->normsq),LOGDELTA))
         break;
     }
 
     if(!tail) {
       for(cpp->kappa1=1;cpp->kappa1<=32;cpp->kappa1++)
-        if(sis_secure(cpp->kappa1,2*SLACK*sqrt(pi->normsq)))
+        if(sis_secure(cpp->kappa1,2*SLACK*sqrt(pi->normsq),LOGDELTA))
           break;
 
       cpp->u1len = cpp->u2len = cpp->kappa1;
@@ -1051,11 +1051,11 @@ int reduce_amortize(statement *ost, const proof *pi) {
   polx (*phi)[n] = (polx(*)[n])ost->cnst->phi;
 
   ost->betasq = pi->normsq;
-  if(!sis_secure(cpp->kappa,6*T*SLACK*ldexp(1,(cpp->f-1)*cpp->b)*sqrt(ost->betasq))) {
+  if(!sis_secure(cpp->kappa,6*T*SLACK*ldexp(1,(cpp->f-1)*cpp->b)*sqrt(ost->betasq),0.0064)) {
     fprintf(stderr,"ERROR in reduce_amortize(): Inner commitments not secure\n");
     return 1;
   }
-  if(!pi->tail && !sis_secure(cpp->kappa1,2*SLACK*sqrt(ost->betasq))) {
+  if(!pi->tail && !sis_secure(cpp->kappa1,2*SLACK*sqrt(ost->betasq),0.0064)) {
     fprintf(stderr,"ERROR in reduce_amortize(): Outer commitments not secure\n");
     return 2;
   }

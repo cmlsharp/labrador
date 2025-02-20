@@ -67,7 +67,7 @@ typedef struct {
 } witness;
 
 __attribute__((const))
-int sis_secure(size_t rank, double norm);
+int sis_secure(size_t rank, double norm, double logdelta);
 #define init_comkey NAMESPACE(init_comkey)
 __attribute__((visibility("default")))
 void init_comkey(size_t n);

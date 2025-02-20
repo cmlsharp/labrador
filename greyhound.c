@@ -39,11 +39,11 @@ static int init_polcomctx(polcomctx *ctx, size_t len) {
       ctx->normsq += (exp2(2*cpp->bu)*(cpp->fu - 1) + exp2(2*(LOGQ-(cpp->fu - 1)*cpp->bu)))/12*(cpp->kappa+1)*ctx->n;
       ctx->normsq *= N;
 
-      if(sis_secure(cpp->kappa,6*T*SLACK*exp2(cpp->bu)*sqrt(ctx->normsq)))
+      if(sis_secure(cpp->kappa,6*T*SLACK*exp2(cpp->bu)*sqrt(ctx->normsq),LOGDELTA))
         break;
     }
     for(cpp->kappa1=1;cpp->kappa1<=32;cpp->kappa1++)
-      if(sis_secure(cpp->kappa1,2*SLACK*sqrt(ctx->normsq)))
+      if(sis_secure(cpp->kappa1,2*SLACK*sqrt(ctx->normsq),LOGDELTA))
         break;
 
     if(cpp->kappa <= 32 && cpp->kappa1 <= 32)
@@ -388,11 +388,11 @@ int polcom_reduce(prncplstmnt *st, const polcomprf *pi) {
   uint8_t hashbuf[24+cpp->kappa1*N*QBYTES];
   polx *buf;
 
-  if(!sis_secure(cpp->kappa,6*T*SLACK*exp2(cpp->bu)*sqrt(pi->normsq))) {
+  if(!sis_secure(cpp->kappa,6*T*SLACK*exp2(cpp->bu)*sqrt(pi->normsq),0.0064)) {
     fprintf(stderr,"ERROR in polcom_reduce(): Inner commitments not secure\n");
     return 1;
   }
-  if(!sis_secure(cpp->kappa1,2*SLACK*sqrt(pi->normsq))) {
+  if(!sis_secure(cpp->kappa1,2*SLACK*sqrt(pi->normsq),0.0064)) {
     fprintf(stderr,"ERROR in polcom_reduce(): Outer commitments not secure\n");
     return 2;
   }

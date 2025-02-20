@@ -711,9 +711,9 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     assert(principle_verify(&st, &wt) == 0);
 
 
-    //composite cproof = {};
-    //assert(composite_prove_principle(&cproof, &st, &wt) == 0);
-    //printf("%d\n", composite_verify_principle(&cproof, &st));
+    composite cproof = {};
+    assert(composite_prove_principle(&cproof, &st, &wt) == 0);
+    printf("%d\n", composite_verify_principle(&cproof, &st));
 
     free(wit_vecsx);
     free(commitments);
