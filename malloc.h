@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 static void *_malloc(size_t size) {
   void *ret;
@@ -11,6 +12,7 @@ static void *_malloc(size_t size) {
     fprintf(stderr,"ERROR: Not enough memory\n");
     exit(1);
   }
+  memset(ret, 0, size);
   return ret;
 }
 
@@ -21,6 +23,7 @@ static void *_aligned_alloc(size_t alignment, size_t size) {
     fprintf(stderr,"ERROR: Not enough memory\n");
     exit(1);
   }
+  memset(ret, 0, size);
   return ret;
 }
 
