@@ -27,6 +27,22 @@ const char *MOD_STR = "18446744073709551617";
 #define INT_BYTES CEILDIV(N+1,8)
 
 
+mpz_t *new_mpz_array(size_t len)
+{
+    mpz_t *arr = _malloc(len * sizeof *arr);
+    for (size_t i = 0; i != len; i++) {
+        mpz_init(arr[i]);
+    }
+    return arr;
+}
+
+void free_mpz_array(mpz_t *arr, size_t len)
+{
+    for (size_t i = 0; i != len; i++) {
+        mpz_clear(arr[i]);
+    }
+    free(arr);
+}
 void poly_print(const poly *a, const char *fmt, ...)
 {
     size_t i;
@@ -377,60 +393,139 @@ void polxvec_print_debug(char const *name, polx const *a, size_t len)
     printf("], dtype='object')\n");
 
 }
-
-// window into challenge
 typedef struct {
     size_t k;
     size_t m;
     size_t md;
+    struct {
+	mpz_t *psi;
+    } round1;
+    struct {
+	mpz_t *alpha;
+	mpz_t *beta;
+	mpz_t *gamma;
+	mpz_t *deltas[ELL];
+	polx *epsilon;
+	polx *zeta;
+    } round2;
+} challenge;
 
-    mpz_t const *alpha;
-    mpz_t const *beta;
-    mpz_t const *gamma;
-    mpz_t const *deltas[ELL];
-    mpz_t const *epsilon;
-    mpz_t const *zeta;
-} chall_view;
 
-void init_chall_view(chall_view *view, mpz_t const *buf, size_t k, size_t m, size_t md)
+void new_challenge(challenge *chall, size_t k, size_t m, size_t md)
 {
-    view->m = m;
-    view->k = k;
-    view->md = md;
-    view->alpha = buf;
-    view->beta = view->alpha + view->k;
-    view->gamma = view->beta + view->k;
-    view->deltas[0] = view->gamma + view->k;
-    for (size_t i = 1; i != ELL; i++) {
-        view->deltas[i] = view->deltas[i-1] + view->k;
+    chall->k = k;
+    chall->m = m;
+    chall->md = md;
+    chall->round1.psi = new_mpz_array((4 + ELL) * k);
+
+    chall->round2.alpha = chall->round1.psi + k;
+    chall->round2.beta = chall->round2.alpha + k;
+    chall->round2.gamma = chall->round2.beta + k;
+    chall->round2.deltas[0] = chall->round2.gamma + k;
+    for (size_t i = 1; i != ELL; i ++) {
+	chall->round2.deltas[i] = chall->round2.deltas[i-1] + k;
     }
-    view->epsilon = view->deltas[ELL-1] + view->k;
-    view->zeta = view->epsilon + view->m;
+
+    chall->round2.epsilon = _aligned_alloc(64, (m+md) * sizeof (polx));
+    chall->round2.zeta = chall->round2.epsilon + m;
 }
 
-
-void next_challenge(chall_view *view)
+void free_challenge(challenge *chall)
 {
-    init_chall_view(view, view->zeta + view->md, view->k, view->m, view->md);
+    free_mpz_array(chall->round1.psi, (4+ELL) * chall->k);
+    free(chall->round2.epsilon);
 }
 
-
-mpz_t *new_mpz_array(size_t len)
+challenge *new_challenge_array(size_t count, size_t k, size_t m, size_t md)
 {
-    mpz_t *arr = _malloc(len * sizeof *arr);
-    for (size_t i = 0; i != len; i++) {
-        mpz_init(arr[i]);
+    challenge *ret = _malloc(count * sizeof *ret);
+    for (size_t i = 0; i != count; i++) {
+	new_challenge(ret + i, k, m, md);
     }
-    return arr;
+    return ret;
+}
+void free_challenge_array(challenge *challs, size_t count)
+{
+    for (size_t i = 0; i != count; i++) {
+	free_challenge(challs + i);
+    }
 }
 
-void free_mpz_array(mpz_t *arr, size_t len)
+void squeeze_mpz(mpz_t result, shake128incctx *shakectx)
 {
-    for (size_t i = 0; i != len; i++) {
-        mpz_clear(arr[i]);
-    }
-    free(arr);
+    uint8_t buf[N/8];
+    shake128_inc_squeeze(buf, N/8, shakectx);
+    mpz_import(result, N/8, 1, 1, 0, 0, buf);
 }
+
+void squeeze_challenges_r1(challenge *challs, size_t count, shake128incctx *shakectx)
+{
+    size_t k = challs[0].k;
+    for (size_t i = 0; i != count; i++) {
+	for (size_t j = 0; j != k; j++) {
+	    squeeze_mpz(challs[i].round1.psi[j], shakectx);
+	}
+    }
+}
+
+void squeeze_challenges_r2(challenge *challs, size_t count, shake128incctx *shakectx)
+{
+    size_t k = challs[0].k;
+    size_t m = challs[0].m;
+    size_t md = challs[0].md;
+
+    for (size_t i = 0; i != count; i++) {
+	for (size_t j = 0; j != (3+ELL) * k; j++) {
+	    squeeze_mpz(challs[i].round2.alpha[j], shakectx);
+	}
+	mpz_t scratch; 
+	mpz_init(scratch);
+	for (size_t j = 0; j != m+md; j++) {
+	    squeeze_mpz(scratch, shakectx);
+	    polx_frommpz(challs[i].round2.epsilon + j, scratch);
+	}
+	mpz_clear(scratch);
+    }
+}
+
+
+// window into challenge
+//typedef struct {
+//    size_t k;
+//    size_t m;
+//    size_t md;
+//
+//    mpz_t const *alpha;
+//    mpz_t const *beta;
+//    mpz_t const *gamma;
+//    mpz_t const *deltas[ELL];
+//    mpz_t const *epsilon;
+//    mpz_t const *zeta;
+//} chall_view;
+//
+//void init_chall_view(chall_view *view, mpz_t const *buf, size_t k, size_t m, size_t md)
+//{
+//    view->m = m;
+//    view->k = k;
+//    view->md = md;
+//    view->alpha = buf;
+//    view->beta = view->alpha + view->k;
+//    view->gamma = view->beta + view->k;
+//    view->deltas[0] = view->gamma + view->k;
+//    for (size_t i = 1; i != ELL; i++) {
+//        view->deltas[i] = view->deltas[i-1] + view->k;
+//    }
+//    view->epsilon = view->deltas[ELL-1] + view->k;
+//    view->zeta = view->epsilon + view->m;
+//}
+//
+//
+//void next_challenge(chall_view *view)
+//{
+//    init_chall_view(view, view->zeta + view->md, view->k, view->m, view->md);
+//}
+
+
 
 void squeeze_challenges(mpz_t *result, size_t count, shake128incctx *shakectx)
 {
@@ -439,6 +534,148 @@ void squeeze_challenges(mpz_t *result, size_t count, shake128incctx *shakectx)
         shake128_inc_squeeze(buf, N/8, shakectx);
         mpz_import(result[i], N/8, 1, 1, 0, 0, buf);
     }
+}
+
+void mpz_mul_vec(mpz_t *result, mpz_t const *a, mpz_t const *b, size_t len)
+{
+    for (size_t i = 0; i != len; i++) {
+	mpz_mul(result[i], a[i], b[i]);
+    }
+}
+
+void mpz_add_vec(mpz_t *result, mpz_t const *a, mpz_t const *b, size_t len)
+{
+    for (size_t i = 0; i != len; i++) {
+	mpz_add(result[i], a[i], b[i]);
+    }
+}
+
+void mpz_addmul_vec(mpz_t *result, mpz_t const *a, mpz_t const *b, size_t len)
+{
+    for (size_t i = 0; i != len; i++) {
+	mpz_addmul(result[i], a[i], b[i]);
+    }
+}
+
+void mpz_neg_vec(mpz_t *result, mpz_t const *a, size_t len)
+{
+    for (size_t i = 0; i != len; i++) {
+	mpz_neg(result[i], a[i]);
+    }
+}
+
+void mpz_sub_vec(mpz_t *result, mpz_t const *a, mpz_t const *b, size_t len)
+{
+    for (size_t i = 0; i != len; i++) {
+	mpz_sub(result[i], a[i], b[i]);
+    }
+}
+
+void mpz_mod_vec(mpz_t *result, mpz_t const *a, mpz_t const mod, size_t len)
+{
+    for (size_t i = 0; i != len; i++) {
+	mpz_mod(result[i], a[i], mod);
+    }
+}
+
+uint64_t beta_squared(size_t k, size_t n)
+{
+    return 128. / 30. * ((3+ELL)*k+n)*(N/2+3);
+}
+
+void f_r1cs(prncplstmnt *st, mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, challenge const *challenges, mpz_t const mod, size_t const *wit_lens, size_t k, size_t n) {
+
+    size_t r = 4+ELL;
+    size_t idx[r];
+    for (size_t i = 0; i != r; i++) {
+	idx[i] = i;
+    }
+
+    uint64_t betasq = beta_squared(k,n);
+    init_prncplstmnt_raw(st, r, wit_lens, betasq, ELL, 1);
+
+    poly one = {};
+    one.vec->c[0] = 1;
+    polx onex;
+    polx_frompoly(&onex, &one);
+
+
+    mpz_t *scratch = new_mpz_array(MAX(n,k));
+    for (size_t i = 0; i != ELL; i++) {
+        init_sparsecnst_raw(st->cnst + i, r, r, idx, wit_lens, 1, true, false);
+	challenge chall = challenges[i];
+
+        // QUADRATIC constraints
+        // 1 * <b, d_i>
+        st->cnst[i].a->len = 1;
+        st->cnst[i].a->rows[0] = 2;
+        st->cnst[i].a->cols[0] = 4+i;
+        st->cnst[i].a->coeffs[0] = onex;
+
+
+
+        // LINEAR constraints
+        //polxvec_frommpzvec(epsilonx, chall.epsilon, m);
+        //polxvec_frommpzvec(zetax, chall.zeta, md);
+
+        // \phi_0^{(i)} = A^T \alpha^{(i)} + B^T \beta^{(i)} + C^T \gamma^{(i)} + C1[0]^T \epsilon
+        // corresponds to wt.s[0] = w
+        sparsematmul_trans(scratch, A, chall.round2.alpha, n, mod);
+        sparsematmul_trans_add(scratch, B, chall.round2.beta, mod);
+        sparsematmul_trans_add(scratch, C, chall.round2.gamma, mod);
+        polxvec_frommpzvec(st->cnst[i].phi[0], scratch, n);
+        //polx_matmul_trans_add(st->cnst[i].phi[0], C1[0], epsilonx, m, n);
+
+
+        // phi_1^{(i)} = -\alpha^{(i)} + \sum_{j=0}^l psi_j \circ \delta_j^{(i)} + C1[1]^t \epsilon
+        // corresponds to wt.s[1] = a = Aw
+	mpz_mul_vec(scratch, challenges[0].round1.psi, chall.round2.deltas[0], k);
+	for (size_t j = 1; j != ELL; j++) {
+	    mpz_addmul_vec(scratch, challenges[j].round1.psi, chall.round2.deltas[j], k);
+	}
+        mpz_sub_vec(scratch, scratch, chall.round2.alpha, k);
+	mpz_mod_vec(scratch, scratch, mod, k);
+	polxvec_frommpzvec(st->cnst[i].phi[1], scratch, k);
+        //polx_matmul_trans_add(st->cnst[i].phi[1], C1[1], epsilonx, m, k);
+
+
+        // phi_2^{(i)} = -\beta^{i} + C1[2]^t \epsilon
+        // corresponds to wt.s[2] = b = Bw
+	mpz_neg_vec(scratch, chall.round2.beta, k);
+	mpz_mod_vec(scratch, scratch, mod, k);
+	polxvec_frommpzvec(st->cnst[i].phi[2], scratch, k);
+        //polx_matmul_trans_add(st->cnst[i].phi[2], C1[2], epsilonx, m, k);
+
+        // phi_3^{(i)} = -\gamma^{(i)} - \psi_i + C1[3]^t \epsilon
+        // corresponds to wt.s[3] = c = Cw
+	mpz_neg_vec(scratch, chall.round2.gamma, k);
+	mpz_sub_vec(scratch, scratch, chall.round1.psi, k);
+	mpz_mod_vec(scratch, scratch, mod, k);
+	polxvec_frommpzvec(st->cnst[i].phi[3], scratch, k);
+        //polx_matmul_trans_add(st->cnst[i].phi[3], C1[3], epsilonx, m, k);
+
+
+        // for all j \in [ELL] \phi_{4+j}^((i)} = C2[j]^t \zeta^{(i)} - delta_j
+        // corresponds to wt.s[4+i] = d_i = \psi_i \circ a = \psi_i \circ Aw
+        for (size_t j = 0; j != ELL; j++) {
+	    mpz_neg_vec(scratch, chall.round2.deltas[j], k);
+	    mpz_mod_vec(scratch, scratch, mod, k);
+	    polxvec_frommpzvec(st->cnst[i].phi[4+j], scratch, k);
+            //polx_matmul_trans_add(st->cnst[i].phi[4+j], C2[j], zetax, md, k);
+        }
+
+
+        // set st->cnst[i].b to whatever it actually evaluates to
+        //sparsecnst_eval(st->cnst[i].b, &st->cnst[i], sx, &wt);
+
+        // The verifier will check the following: (st->cnst[i].b - <commitment1, \epsilon^(i)> - <commitment2, \zeta^(i)>)(2) mod 2**N + 1 == 0
+        // (and that st->cnst[i].b is computed correctly, via chihuahua/labrador)
+        //polxvec_sprod(&g, commitments, epsilonx, m);
+        //polxvec_sprod_add(&g, commitment2, zetax, md);
+        //polx_sub(&g, st->cnst[i].b, &g);
+    }
+    free_mpz_array(scratch, MAX(k,n));
+    
 }
 
 // generate proof for Aw \circ Bw = Cw (mod 'mod')
@@ -496,15 +733,14 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     shake128incctx tmp_ctx = shakectx;
     shake128_inc_finalize(&tmp_ctx);
 
-    // verifier challenge
-    mpz_t *psis = new_mpz_array(ELL*k);
-    squeeze_challenges(psis, ELL*k, &tmp_ctx);
+    challenge *challenges = new_challenge_array(ELL, k, m, md);
+    squeeze_challenges_r1(challenges, ELL, &tmp_ctx);
 
     // ds[i] = psi[i] * Aw[i]
     mpz_t *ds = new_mpz_array(ELL*k);
-    for (size_t i = 0; i != ELL*k; i++) {
-        mpz_mul(ds[i], psis[i], mat_prods[i % k]);
-        mpz_mod(ds[i], ds[i], mod);
+    for (size_t i = 0; i != ELL; i++) {
+	mpz_mul_vec(ds + i*k, challenges[i].round1.psi, mat_prods, k);
+	mpz_mod_vec(ds + i*k, ds + i*k, mod, k);
     }
     free_mpz_array(mat_prods, 3*k);
 
@@ -537,11 +773,9 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     shake128_inc_finalize(&tmp_ctx);
 
 
-    size_t chall_size = k*(ELL+3) + m + md;
-
     // final challenges
-    mpz_t *challs = new_mpz_array(chall_size*ELL);
-    squeeze_challenges(challs, chall_size*ELL, &tmp_ctx);
+    squeeze_challenges_r2(challenges, ELL, &tmp_ctx);
+
 
     // BEGIN constructing stuff for chihuahua call
 
@@ -569,140 +803,111 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         wt.normsq[i] = polyvec_sprodz(wt.s[i], wt.s[i], wit_lens[i]);
         sx[i] = sx[i-1] + wit_lens[i-1];
     }
-    uint64_t betasq = 128. / 30. * ((3+ELL)*k+n)*N/2;
+    //uint64_t betasq = 128. / 30. * ((3+ELL)*k+n)*N/2;
 
     prncplstmnt st = {};
-    init_prncplstmnt_raw(&st, r, wit_lens, betasq, ELL, 1);
-    shake128_inc_finalize(&shakectx);
-    shake128_inc_squeeze(st.h, 16, &shakectx);
-
-    // need constant 1 polynomial
-    poly one = {};
-    one.vec->c[0] = 1;
-    polx onex;
-    polx_frompoly(&onex, &one);
-
-    size_t idx[r];
-    // only the idx[4] changes across sparse cnsts, all others are the same
-    for (size_t i = 0; i != r; i++) {
-        idx[i] = i;
-    }
+    f_r1cs(&st, A, B, C, challenges, mod, wit_lens, k, n);
 
     mpz_t eval;
     mpz_init(eval);
+    //polx *epsilonx = _aligned_alloc(64, m * sizeof *epsilonx);
+    ///polx *zetax = _aligned_alloc(64, md * sizeof *epsilonx);
 
-    chall_view chall = {};
-    init_chall_view(&chall, challs, k, m, md);
-
-    // scratch space for mpz operations
-    mpz_t *scratch = new_mpz_array(n);
-    // sum of all delta_j^{(i)}s mod mod
-    mpz_t *deltasum = new_mpz_array(k);
-
-
-    // polx versions of chall.epsilon and chall.zeta
-    polx *epsilonx = _aligned_alloc(64, m * sizeof *epsilonx);
-    polx *zetax = _aligned_alloc(64, md * sizeof *epsilonx);
-
-    for (size_t i = 0; i != ELL; i++, next_challenge(&chall)) {
-        init_sparsecnst_raw(st.cnst + i, r, r, idx, wit_lens, 1, true, false);
-
-        // QUADRATIC constraints
-        // 1 * <b, d_i>
-        st.cnst[i].a->len = 1;
-        st.cnst[i].a->rows[0] = 2;
-        st.cnst[i].a->cols[0] = 4+i;
-        st.cnst[i].a->coeffs[0] = onex;
-
-
-
-        // LINEAR constraints
-        polxvec_frommpzvec(epsilonx, chall.epsilon, m);
-        polxvec_frommpzvec(zetax, chall.zeta, md);
-        for (size_t j = 0; j != k; j++) {
-            mpz_set(deltasum[j], chall.deltas[0][j]);
-            for (size_t z = 1; z != ELL; z++) {
-                mpz_add(deltasum[j], deltasum[j], chall.deltas[z][j]);
-            }
-            mpz_mod(deltasum[j], deltasum[j], mod);
-        }
-
-        // \phi_0^{(i)} = A^T \alpha^{(i)} + B^T \beta^{(i)} + C^T \gamma^{(i)} + C1[0]^T \epsilon
-        // corresponds to wt.s[0] = w
-        sparsematmul_trans(scratch, A, chall.alpha, n, mod);
-        sparsematmul_trans_add(scratch, B, chall.beta, mod);
-        sparsematmul_trans_add(scratch, C, chall.gamma, mod);
-
-        polxvec_frommpzvec(st.cnst[i].phi[0], scratch, n);
-        polx_matmul_trans_add(st.cnst[i].phi[0], C1[0], epsilonx, m, n);
-
-
-        // phi_1^{(i)} = -\alpha^{(i)} + \sum_{j=0}^l psi_i \circ \delta_j^{(i)} + C1[1]^t \epsilon
-        // corresponds to wt.s[1] = a = Aw
-        for (size_t j = 0; j != k; j++) {
-            mpz_mul(scratch[0], psis[i*k+j], deltasum[j]);
-            mpz_sub(scratch[0], scratch[0], chall.alpha[j]);
-            mpz_mod(scratch[0], scratch[0], mod);
-            polx_frommpz(st.cnst[i].phi[1] + j, scratch[0]);
-        }
-        polx_matmul_trans_add(st.cnst[i].phi[1], C1[1], epsilonx, m, k);
-
-
-        // phi_2^{(i)} = -\beta^{i} + C1[2]^t \epsilon
-        // corresponds to wt.s[2] = b = Bw
-        for (size_t j = 0; j != k; j++) {
-            mpz_neg(scratch[0], chall.beta[j]);
-            mpz_mod(scratch[0], scratch[0], mod);
-            polx_frommpz(st.cnst[i].phi[2] + j, scratch[0]);
-        }
-        polx_matmul_trans_add(st.cnst[i].phi[2], C1[2], epsilonx, m, k);
-
-        // phi_3^{(i)} = -\gamma^{(i)} - \psi_i + C1[3]^t \epsilon
-        // corresponds to wt.s[3] = c = Cw
-        for (size_t j = 0; j != k; j++) {
-            mpz_neg(scratch[0], chall.gamma[j]);
-            mpz_sub(scratch[0], scratch[0], psis[i*k+j]);
-            mpz_mod(scratch[0], scratch[0], mod);
-            polx_frommpz(st.cnst[i].phi[3] + j, scratch[0]);
-        }
-        polx_matmul_trans_add(st.cnst[i].phi[3], C1[3], epsilonx, m, k);
-
-
-        // for all j != i \in [ELL] \phi_{4+j}^((i)} = C2[j]^t \zeta^{(i)}
-        // \phi_{4+i}^{(i)} = C2[i]^t \zeta^{(i)} - \sum_{j=0}^ELL \delta^{(i)}_j
-        // corresponds to wt.s[4+i] = d_i = \psi_i \circ a = \psi_i \circ Aw
-        for (size_t j = 0; j != ELL; j++) {
-            polx_matmul_trans(st.cnst[i].phi[4+j], C2[j], zetax, md, k);
-        }
-
-        for (size_t j = 0; j != k; j++) {
-            // -deltasum
-            mpz_sub(scratch[0], mod, deltasum[j]);
-            polx tmp;
-            polx_frommpz(&tmp, scratch[0]);
-            polx_add(st.cnst[i].phi[4+i] + j, st.cnst[i].phi[4+i] + j, &tmp);
-        }
-
-        // set st.cnst[i].b to whatever it actually evaluates to
+    for (size_t i = 0; i != ELL; i++) {
         sparsecnst_eval(st.cnst[i].b, &st.cnst[i], sx, &wt);
-
-        sparsecnst_hash(st.h, st.cnst + i, r, wit_lens, 1);
-
-        // this should pass trivially because of how we set st.cnst[i].b
-        assert(sparsecnst_check(st.cnst +i, sx, &wt));
-
-        // The verifier will check the following: (st.cnst[i].b - <commitment1, \epsilon^(i)> - <commitment2, \zeta^(i)>)(2) mod 2**N + 1 == 0
-        // (and that st.cnst[i].b is computed correctly, via chihuahua/labrador)
-        polx g;
-        polxvec_sprod(&g, commitments, epsilonx, m);
-        polxvec_sprod_add(&g, commitment2, zetax, md);
-        polx_sub(&g, st.cnst[i].b, &g);
-        polx_eval(eval, &g, 2, mod);
-        assert(mpz_sgn(eval) == 0);
+	polx_eval(eval, st.cnst[i].b, 2, mod);
+	assert(mpz_sgn(eval) == 0);
     }
+
+
+
+    shake128_inc_finalize(&shakectx);
+    shake128_inc_squeeze(st.h, 16, &shakectx);
+    for (size_t i = 0; i != ELL; i++) {
+	sparsecnst_hash(st.h, st.cnst + i, r, wit_lens, 1);
+    }
+    //for (size_t i = 0; i != ELL; i++, next_challenge(&chall)) {
+    //    init_sparsecnst_raw(st.cnst + i, r, r, idx, wit_lens, 1, true, false);
+
+    //    // QUADRATIC constraints
+    //    // 1 * <b, d_i>
+    //    st.cnst[i].a->len = 1;
+    //    st.cnst[i].a->rows[0] = 2;
+    //    st.cnst[i].a->cols[0] = 4+i;
+    //    st.cnst[i].a->coeffs[0] = onex;
+
+
+
+    //    // LINEAR constraints
+    //    //polxvec_frommpzvec(epsilonx, chall.epsilon, m);
+    //    //polxvec_frommpzvec(zetax, chall.zeta, md);
+
+    //    // \phi_0^{(i)} = A^T \alpha^{(i)} + B^T \beta^{(i)} + C^T \gamma^{(i)} + C1[0]^T \epsilon
+    //    // corresponds to wt.s[0] = w
+    //    sparsematmul_trans(scratch, A, chall.alpha, n, mod);
+    //    sparsematmul_trans_add(scratch, B, chall.beta, mod);
+    //    sparsematmul_trans_add(scratch, C, chall.gamma, mod);
+
+    //    polxvec_frommpzvec(st.cnst[i].phi[0], scratch, n);
+    //    //polx_matmul_trans_add(st.cnst[i].phi[0], C1[0], epsilonx, m, n);
+
+
+    //    // phi_1^{(i)} = -\alpha^{(i)} + \sum_{j=0}^l psi_j \circ \delta_j^{(i)} + C1[1]^t \epsilon
+    //    // corresponds to wt.s[1] = a = Aw
+    //    mpz_mul_vec(scratch, psis, chall.deltas[0], k);
+    //    for (size_t j = 1; j != ELL; j++) {
+    //        mpz_addmul_vec(scratch, psis + j*k, chall.deltas[j], k);
+    //    }
+    //    mpz_sub_vec(scratch, scratch, chall.alpha, k);
+    //    mpz_mod_vec(scratch, scratch, mod, k);
+    //    polxvec_frommpzvec(st.cnst[i].phi[1], scratch, k);
+    //    //polx_matmul_trans_add(st.cnst[i].phi[1], C1[1], epsilonx, m, k);
+
+
+    //    // phi_2^{(i)} = -\beta^{i} + C1[2]^t \epsilon
+    //    // corresponds to wt.s[2] = b = Bw
+    //    mpz_neg_vec(scratch, chall.beta, k);
+    //    mpz_mod_vec(scratch, scratch, mod, k);
+    //    polxvec_frommpzvec(st.cnst[i].phi[2], scratch, k);
+    //    //polx_matmul_trans_add(st.cnst[i].phi[2], C1[2], epsilonx, m, k);
+
+    //    // phi_3^{(i)} = -\gamma^{(i)} - \psi_i + C1[3]^t \epsilon
+    //    // corresponds to wt.s[3] = c = Cw
+    //    mpz_neg_vec(scratch, chall.gamma, k);
+    //    mpz_sub_vec(scratch, scratch, psis + i*k, k);
+    //    mpz_mod_vec(scratch, scratch, mod, k);
+    //    polxvec_frommpzvec(st.cnst[i].phi[3], scratch, k);
+    //    //polx_matmul_trans_add(st.cnst[i].phi[3], C1[3], epsilonx, m, k);
+
+
+    //    // for all j \in [ELL] \phi_{4+j}^((i)} = C2[j]^t \zeta^{(i)} - delta_j
+    //    // corresponds to wt.s[4+i] = d_i = \psi_i \circ a = \psi_i \circ Aw
+    //    for (size_t j = 0; j != ELL; j++) {
+    //        mpz_neg_vec(scratch, chall.deltas[j], k);
+    //        mpz_mod_vec(scratch, scratch, mod, k);
+    //        polxvec_frommpzvec(st.cnst[i].phi[4+j], scratch, k);
+    //        //polx_matmul_trans_add(st.cnst[i].phi[4+j], C2[j], zetax, md, k);
+    //    }
+
+
+    //    // set st.cnst[i].b to whatever it actually evaluates to
+    //    sparsecnst_eval(st.cnst[i].b, &st.cnst[i], sx, &wt);
+
+    //    sparsecnst_hash(st.h, st.cnst + i, r, wit_lens, 1);
+
+    //    // this should pass trivially because of how we set st.cnst[i].b
+    //    assert(sparsecnst_check(st.cnst +i, sx, &wt));
+
+    //    // The verifier will check the following: (st.cnst[i].b - <commitment1, \epsilon^(i)> - <commitment2, \zeta^(i)>)(2) mod 2**N + 1 == 0
+    //    // (and that st.cnst[i].b is computed correctly, via chihuahua/labrador)
+    //    polx g;
+    //    //polxvec_sprod(&g, commitments, epsilonx, m);
+    //    //polxvec_sprod_add(&g, commitment2, zetax, md);
+    //    //polx_sub(&g, st.cnst[i].b, &g);
+    //    polx_eval(eval, &g, 2, mod);
+    //    assert(mpz_sgn(eval) == 0);
+    //}
     mpz_clear(eval);
-    free_mpz_array(scratch, n);
-    free_mpz_array(deltasum, k);
 
     print_prncplstmnt_pp(&st);
     // should pass trivially per above
@@ -716,10 +921,9 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     free(wit_vecsx);
     free(commitments);
     free(hashbuf);
-    free_mpz_array(psis, ELL*k);
-    free_mpz_array(challs, chall_size*ELL);
-    free(epsilonx);
-    free(zetax);
+    free_challenge_array(challenges, ELL);
+    //free(epsilonx);
+    //free(zetax);
     free_witness(&wt); // frees wit_vecs
     free_prncplstmnt(&st);
 }
@@ -728,8 +932,8 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 int main(void)
 {
     // placeholders
-    size_t k = 100;
-    size_t n = 100;
+    size_t k = 1000;
+    size_t n = 1000;
     // todo: replace these with approproate values
     size_t m = 3;
     size_t md = 3;

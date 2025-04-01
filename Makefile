@@ -1,7 +1,7 @@
 CC = /usr/bin/clang
 DBGFLAGS = -std=c2x -Wall -Wextra -Wmissing-prototypes -Wredundant-decls -Wno-missing-prototypes\
-  -Wshadow -Wpointer-arith -Wno-unused-function -flto=auto \
-  -fwrapv -march=native -mtune=native -O0 -ggdb -fsanitize=undefined -fsanitize=address -fno-omit-frame-pointer
+  -Wshadow -Wpointer-arith -Wno-unused-function -flto=auto -fsanitize=undefined \
+  -fwrapv -march=native -mtune=native -O0 -ggdb
 CFLAGS = -std=c2x -Wall -Wextra -Wredundant-decls \
   -Wshadow -Wpointer-arith -Wno-unused-function -flto=auto \
   -fwrapv -march=native -mtune=native -O3 -pg
@@ -54,6 +54,9 @@ test_greyhound: test_greyhound.c $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) test_greyhound.c $(SOURCES) -o $@ -lm
 
 r1cs: r1cs.c $(SOURCES) $(HEADERS)
+	$(CC) $(DBGFLAGS) r1cs.c $(SOURCES) -o $@ -lm -lgmp -g
+
+r1cs_new: r1cs_new.c $(SOURCES) $(HEADERS)
 	$(CC) $(DBGFLAGS) r1cs.c $(SOURCES) -o $@ -lm -lgmp -g
 
 libdogs.so: $(SOURCES) $(HEADERS)
