@@ -27,22 +27,12 @@ const char *MOD_STR = "18446744073709551617";
 #define INT_BYTES CEILDIV(N+1,8)
 #define GNORM(k,n) (((4 + ELL)*k+n)*(N/2+3))
 
-//struct R1CSParams {
-//    size_t k;
-//    size_t n;
-//    size_t m;
-//    size_t md;
-//}
-//
-//uint64_t gnorm(R1CSParams const *rparams)
-//{
-//    return ((4+ELL)*rparams->k+rparams->n)*(N/2+3)
-//}
-//
-//uint64_t gbits_width(R1CSParams const *rparams)
-//{
-//    return significant_bits(gnorm(rparams))+1;
-//}
+typedef struct {
+    size_t k;
+    size_t n;
+    size_t m[3];
+} R1CSParams;
+
 
 void polz_print2(const polz *a) {
     for (size_t i = 0; i != N; i++) {
@@ -441,9 +431,6 @@ void polxvec_print_debug(char const *name, polx const *a, size_t len)
 
 }
 typedef struct {
-    size_t k;
-    size_t m;
-    size_t md;
     struct {
 	mpz_t *psi;
     } round1;
@@ -458,43 +445,40 @@ typedef struct {
 } challenge;
 
 
-void new_challenge(challenge *chall, size_t k, size_t m, size_t md)
+void new_challenge(challenge *chall, R1CSParams const *rp)
 {
-    chall->k = k;
-    chall->m = m;
-    chall->md = md;
-    chall->round1.psi = new_mpz_array((4 + ELL) * k);
+    chall->round1.psi = new_mpz_array((4 + ELL) * rp->k);
 
-    chall->round2.alpha = chall->round1.psi + k;
-    chall->round2.beta = chall->round2.alpha + k;
-    chall->round2.gamma = chall->round2.beta + k;
-    chall->round2.deltas[0] = chall->round2.gamma + k;
+    chall->round2.alpha = chall->round1.psi + rp->k;
+    chall->round2.beta = chall->round2.alpha + rp->k;
+    chall->round2.gamma = chall->round2.beta + rp->k;
+    chall->round2.deltas[0] = chall->round2.gamma + rp->k;
     for (size_t i = 1; i != ELL; i ++) {
-	chall->round2.deltas[i] = chall->round2.deltas[i-1] + k;
+	chall->round2.deltas[i] = chall->round2.deltas[i-1] + rp->k;
     }
 
-    chall->round2.epsilon = _aligned_alloc(64, (m+md) * sizeof (polx));
-    chall->round2.zeta = chall->round2.epsilon + m;
+    chall->round2.epsilon = _aligned_alloc(64, (rp->m[0]+rp->m[1]+rp->m[2]) * sizeof (polx));
+    chall->round2.zeta = chall->round2.epsilon + rp->m[0];
 }
 
-void free_challenge(challenge *chall)
+void free_challenge(challenge *chall, R1CSParams const *rp)
 {
-    free_mpz_array(chall->round1.psi, (4+ELL) * chall->k);
+    free_mpz_array(chall->round1.psi, (4+ELL) * rp->k);
     free(chall->round2.epsilon);
 }
 
-challenge *new_challenge_array(size_t count, size_t k, size_t m, size_t md)
+challenge *new_challenge_array(size_t count, R1CSParams const *rp)
 {
     challenge *ret = _malloc(count * sizeof *ret);
     for (size_t i = 0; i != count; i++) {
-	new_challenge(ret + i, k, m, md);
+	new_challenge(ret + i, rp);
     }
     return ret;
 }
-void free_challenge_array(challenge *challs, size_t count)
+void free_challenge_array(challenge *challs, size_t count, R1CSParams const *rp)
 {
     for (size_t i = 0; i != count; i++) {
-	free_challenge(challs + i);
+	free_challenge(challs + i, rp);
     }
 }
 
@@ -517,35 +501,30 @@ void prepare_challenge_hash(shake128incctx *shakectx, uint8_t *h, polx const *co
     free(hashbuf);
 }
 
-void get_round1_challenges(challenge *challs, uint8_t *h, polx const *commitment, size_t comm_size,  size_t n_challs)
+void get_round1_challenges(challenge *challs, uint8_t *h, polx const *commitment,  size_t n_challs, R1CSParams const *rp)
 {
     shake128incctx shakectx;
-    prepare_challenge_hash(&shakectx, h, commitment, comm_size);
+    prepare_challenge_hash(&shakectx, h, commitment, rp->m[0]);
 
-    size_t k = challs[0].k;
     for (size_t i = 0; i != n_challs; i++) {
-	for (size_t j = 0; j != k; j++) {
+	for (size_t j = 0; j != rp->k; j++) {
 	    squeeze_mpz(challs[i].round1.psi[j], &shakectx);
 	}
     }
 }
 
-void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment, size_t comm_size, size_t n_challs)
+void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment, size_t n_challs, R1CSParams const *rp)
 {
     shake128incctx shakectx;
-    prepare_challenge_hash(&shakectx, h, commitment, comm_size);
-
-    size_t k = challs[0].k;
-    size_t m = challs[0].m;
-    size_t md = challs[0].md;
+    prepare_challenge_hash(&shakectx, h, commitment, rp->m[1]);
 
     // domain separation never hurt anyone
     uint64_t nonce_domain = ((uint64_t) 1) << 16;
     for (size_t i = 0; i != n_challs; i++) {
-	for (size_t j = 0; j != (3+ELL) * k; j++) {
+	for (size_t j = 0; j != (3+ELL) * rp->k; j++) {
 	    squeeze_mpz(challs[i].round2.alpha[j], &shakectx);
 	}
-	polxvec_ternary(challs[i].round2.epsilon, m+md, h, nonce_domain + i);
+	polxvec_ternary(challs[i].round2.epsilon, rp->m[0] + rp->m[1], h, nonce_domain + i);
     }
 }
 
@@ -555,7 +534,7 @@ void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment
 //typedef struct {
 //    size_t k;
 //    size_t m;
-//    size_t md;
+//    size_t m2;
 //
 //    mpz_t const *alpha;
 //    mpz_t const *beta;
@@ -565,11 +544,11 @@ void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment
 //    mpz_t const *zeta;
 //} chall_view;
 //
-//void init_chall_view(chall_view *view, mpz_t const *buf, size_t k, size_t m, size_t md)
+//void init_chall_view(chall_view *view, mpz_t const *buf, size_t k, size_t m, size_t m2)
 //{
 //    view->m = m;
 //    view->k = k;
-//    view->md = md;
+//    view->m2 = m2;
 //    view->alpha = buf;
 //    view->beta = view->alpha + view->k;
 //    view->gamma = view->beta + view->k;
@@ -584,7 +563,7 @@ void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment
 //
 //void next_challenge(chall_view *view)
 //{
-//    init_chall_view(view, view->zeta + view->md, view->k, view->m, view->md);
+//    init_chall_view(view, view->zeta + view->m2, view->k, view->m, view->m2);
 //}
 
 
@@ -660,7 +639,7 @@ void f_r1cs(prncplstmnt *st, mpz_sparsemat const *A, mpz_sparsemat const *B, mpz
 
         // LINEAR constraints
         //polxvec_frommpzvec(epsilonx, chall.epsilon, m);
-        //polxvec_frommpzvec(zetax, chall.zeta, md);
+        //polxvec_frommpzvec(zetax, chall.zeta, m2);
 
         // \phi_0^{(i)} = A^T \alpha^{(i)} + B^T \beta^{(i)} + C^T \gamma^{(i)} + C1[0]^T \epsilon
         // corresponds to wt.s[0] = w
@@ -710,24 +689,24 @@ void f_r1cs(prncplstmnt *st, mpz_sparsemat const *A, mpz_sparsemat const *B, mpz
         // The verifier will check the following: (st->cnst[i].b - <commitment1, \epsilon^(i)> - <commitment2, \zeta^(i)>)(2) mod 2**N + 1 == 0
         // (and that st->cnst[i].b is computed correctly, via chihuahua/labrador)
         //polxvec_sprod(&g, commitments, epsilonx, m);
-        //polxvec_sprod_add(&g, commitment2, zetax, md);
+        //polxvec_sprod_add(&g, commitment2, zetax, m2);
         //polx_sub(&g, st->cnst[i].b, &g);
     }
     free_mpz_array(scratch, MAX(st->n[0],st->n[1]));
     
 }
 
-void f_comm(prncplstmnt *st, challenge const *challenges, polx *commitments, polx const *const *C1, polx const *const *C2, size_t m, size_t md)
+void f_comm(prncplstmnt *st, challenge const *challenges, polx *commitments, polx const *const *C1, polx const *const *C2, R1CSParams const *rp)
 {
     for (size_t i = 0; i != ELL; i++) {
 	for (size_t j = 0; j != 4; j++) {
-	    polx_matmul_trans_add(st->cnst[i].phi[j], C1[j], challenges[i].round2.epsilon, m, st->n[j]);
+	    polx_matmul_trans_add(st->cnst[i].phi[j], C1[j], challenges[i].round2.epsilon, rp->m[0], st->n[j]);
 	}
 	for (size_t j = 0; j != ELL; j++) {
-	    polx_matmul_trans_add(st->cnst[i].phi[4+j], C2[j], challenges[i].round2.zeta, md, st->n[j]);
+	    polx_matmul_trans_add(st->cnst[i].phi[4+j], C2[j], challenges[i].round2.zeta, rp->m[1], st->n[j]);
 	}
-	polxvec_sprod_add(st->cnst[i].b, commitments, challenges[i].round2.epsilon, m);
-	polxvec_sprod_add(st->cnst[i].b, commitments + m, challenges[i].round2.zeta, md);
+	polxvec_sprod_add(st->cnst[i].b, commitments, challenges[i].round2.epsilon, rp->m[0]);
+	polxvec_sprod_add(st->cnst[i].b, commitments + rp->m[0], challenges[i].round2.zeta, rp->m[1]);
     }
 }
 
@@ -782,7 +761,7 @@ void cnst_gadget_vec(polx *r, size_t m, size_t i, int64_t s)
     }
 }
 
-void f_g_decomp(prncplstmnt *st, int64_t nudge, size_t width)
+void f_gdecomp(prncplstmnt *st, int64_t nudge, size_t width)
 {
     int64_t nudge_coeffs[N];
     for (size_t i = 0; i != N; i++) {
@@ -802,83 +781,87 @@ void f_g_decomp(prncplstmnt *st, int64_t nudge, size_t width)
 // generate proof for Aw \circ Bw = Cw (mod 'mod')
 // C1 and C2 are commitment matrices.
 // A,B,C have dimension k x n
-// m, md are #rows of C1 and C2 respectively
-void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, polx const *const *C1, polx const *const *C2, mpz_t *w, mpz_t const mod, uint8_t *hashstate, size_t k, size_t n, size_t m, size_t md)
+// m, m2 are #rows of C1 and C2 respectively
+void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, polx const *const *C1, polx const *const *C2, mpz_t *w, mpz_t const mod, uint8_t *hashstate, R1CSParams const *rp)
 {
 
-    uint64_t gbits_width = significant_bits(GNORM(k,n))+1;
-
     // compute Aw Bw Cw, store contiguously
-    mpz_t *mat_prods = new_mpz_array(3*k);
-    sparsematmul(mat_prods, A, w, k, mod);
-    sparsematmul(mat_prods + k, B, w, k, mod);
-    sparsematmul(mat_prods + 2*k, C, w, k, mod);
+    mpz_t *mat_prods = new_mpz_array(3*rp->k);
+    sparsematmul(mat_prods, A, w, rp->k, mod);
+    sparsematmul(mat_prods + rp->k, B, w, rp->k, mod);
+    sparsematmul(mat_prods + 2*rp->k, C, w, rp->k, mod);
 
     // coefficient vectors for w||Aw||Bw||Cw
     // TODO: include binary check in labrador constraints
-    int64_t *encoded = _malloc((n+3*k) * N * sizeof *encoded);
-    lift_to_coeffs_vector(encoded, w, n);
+    int64_t *encoded = _malloc((rp->n+3*rp->k) * N * sizeof *encoded);
+    lift_to_coeffs_vector(encoded, w, rp->n);
     for (size_t i = 0; i != 3; i++) {
-        lift_to_coeffs_vector(encoded + (n + i*k) * N, mat_prods + i*k, k);
+        lift_to_coeffs_vector(encoded + (rp->n + i*rp->k) * N, mat_prods + i*rp->k, rp->k);
     }
 
-    size_t wit_vecs_size = (ELL+3)*k + n + ELL*gbits_width;
+    size_t gnorm = ((4+ELL)*rp->k+rp->n)*(N/2+3);
+    size_t g_bitwidth = significant_bits(gnorm) + 1;
+
+    size_t wit_vecs_size = (ELL+3)*rp->k + rp->n + ELL*g_bitwidth;
 
     // poly representations of w||Aw||Bw||Cw
     // buffer has enough space for the rest of the witnesses computed later
     poly *wit_vecs = _aligned_alloc(64, wit_vecs_size * sizeof *wit_vecs);
-    polyvec_fromint64vec(wit_vecs, n+3*k, 1, encoded);
+    polyvec_fromint64vec(wit_vecs, rp->n+3*rp->k, 1, encoded);
     free(encoded);
 
     // polx version of wit_vecs, don't need polx versions for decomposed commitments
     polx *wit_vecsx = _aligned_alloc(64, wit_vecs_size * sizeof *wit_vecsx);
-    polxvec_frompolyvec(wit_vecsx, wit_vecs, 3*k+n);
+    polxvec_frompolyvec(wit_vecsx, wit_vecs, 3*rp->k+rp->n);
 
     // First commitment
     // TODO: include commitment check in labrador constraints
-    polx *commitments = _aligned_alloc(64, (m + md) * sizeof *commitments);
+    polx *commitments = _aligned_alloc(64, (rp->m[0] + rp->m[1] + rp->m[2]) * sizeof *commitments);
 
-    polx_matmul(commitments, C1[0], wit_vecsx, m, n);
+    polx_matmul(commitments, C1[0], wit_vecsx, rp->m[0], rp->n);
 
     for (size_t i = 1; i != 4; i++) {
-        polx_matmul_add(commitments, C1[i], wit_vecsx + n + ((i-1)*k), m, k);
+        polx_matmul_add(commitments, C1[i], wit_vecsx + rp->n + ((i-1)*rp->k), rp->m[0], rp->k);
     }
 
-    // TODO also hash public params into hashstate at somepoint
-    challenge *challenges = new_challenge_array(ELL, k, m, md);
-    get_round1_challenges(challenges, hashstate, commitments, m, ELL);
+    // TODO also hash public rp into hashstate at somepoint
+    challenge *challenges = new_challenge_array(ELL, rp);
+    get_round1_challenges(challenges, hashstate, commitments, ELL, rp);
 
     // ds[i] = psi[i] * Aw[i]
-    mpz_t *ds = new_mpz_array(ELL*k);
+    mpz_t *ds = new_mpz_array(ELL*rp->k);
     for (size_t i = 0; i != ELL; i++) {
-	mpz_mul_vec(ds + i*k, challenges[i].round1.psi, mat_prods, k);
-	mpz_mod_vec(ds + i*k, ds + i*k, mod, k);
+	mpz_mul_vec(ds + i*rp->k, challenges[i].round1.psi, mat_prods, rp->k);
+	mpz_mod_vec(ds + i*rp->k, ds + i*rp->k, mod, rp->k);
     }
-    free_mpz_array(mat_prods, 3*k);
+    free_mpz_array(mat_prods, 3*rp->k);
 
     // coeff vectors of ds[i]
-    int64_t *d_coeffs = _malloc(ELL*k*N*sizeof *d_coeffs);
-    lift_to_coeffs_vector(d_coeffs, ds, k*ELL);
-    free_mpz_array(ds, ELL*k);
+    int64_t *d_coeffs = _malloc(ELL*rp->k*N*sizeof *d_coeffs);
+    lift_to_coeffs_vector(d_coeffs, ds, rp->k*ELL);
+    free_mpz_array(ds, ELL*rp->k);
     // poly representation of ds
-    poly *wit_vecs2 = wit_vecs + (3*k+n);
-    polyvec_fromint64vec(wit_vecs2, ELL*k, 1, d_coeffs);
+    poly *wit_vecs2 = wit_vecs + (3*rp->k+rp->n);
+    polyvec_fromint64vec(wit_vecs2, ELL*rp->k, 1, d_coeffs);
     free(d_coeffs);
 
     // polx representatoin of ds
-    polx *wit_vecsx2 = wit_vecsx + 3*k+n;
-    polxvec_frompolyvec(wit_vecsx2, wit_vecs2, ELL*k);
+    polx *wit_vecsx2 = wit_vecsx + 3*rp->k+rp->n;
+    polxvec_frompolyvec(wit_vecsx2, wit_vecs2, ELL*rp->k);
 
     // second commitment
-    polx *commitment2 = commitments + m;
-    polxvec_setzero(commitment2, md);
+    polx *commitment2 = commitments + rp->m[0];
+    polxvec_setzero(commitment2, rp->m[1]);
     for (size_t i = 0; i != ELL; i++) {
-        polx_matmul_add(commitment2, C2[i], wit_vecsx2 + i*k, md, k);
+        polx_matmul_add(commitment2, C2[i], wit_vecsx2 + i*rp->k, rp->m[1], rp->k);
     }
 
-    get_round2_challenges(challenges, hashstate, commitment2, md, ELL);
+    get_round2_challenges(challenges, hashstate, commitment2, ELL, rp);
 
-    // BEGIN constructing stuff for chihuahua call
+    // In principle, we'd do round 3 right now, but we need to compute the g_is
+    // So we take a quick break to construct princplstmnt since we have to do that
+    // later anyway, and we'll partiallly initalize it with f_r1cs and
+    // then call sparsecnst_eval to compute the gs. Then we'll proceed with round3
 
     // num witness vecs
     size_t r = 5 + ELL;
@@ -886,11 +869,11 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     size_t wit_lens[r];
 
     // first witness (w) is length n, rest are k
-    wit_lens[0] = n;
+    wit_lens[0] = rp->n;
     for (size_t i = 1; i != 4+ELL; i++) {
-        wit_lens[i] = k;
+        wit_lens[i] = rp->k;
     }
-    wit_lens[4+ELL] = gbits_width * ELL;
+    wit_lens[4+ELL] = g_bitwidth * ELL;
 
     witness wt = {};
     init_witness_raw_buf(&wt, r, wit_lens, wit_vecs);
@@ -906,8 +889,6 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         wt.normsq[i] = polyvec_sprodz(wt.s[i], wt.s[i], wit_lens[i]);
         sx[i] = sx[i-1] + wit_lens[i-1];
     }
-    //uint64_t betasq = 128. / 30. * ((3+ELL)*k+n)*N/2;
-
     size_t idx[r];
     for (size_t i = 0; i != r; i++) {
 	idx[i] = i;
@@ -915,12 +896,11 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
     prncplstmnt st = {};
 
-    uint64_t betasq = beta_squared(k,n);
+    uint64_t betasq = beta_squared(rp->k,rp->n);
 
     init_prncplstmnt_raw(&st, r, wit_lens, betasq, ELL, 1);
     for (size_t i = 0; i != ELL; i++) {
         init_sparsecnst_raw(st.cnst + i, r, r, idx, wit_lens, 1, true, false);
-	polxvec_setzero(st.cnst[i].b, 1);
     }
 
     f_r1cs(&st, A, B, C, challenges, mod);
@@ -935,14 +915,15 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     }
     mpz_clear(eval);
 
-    polxvec_bin_decompose(wt.s[4+ELL], gs, ELL, GNORM(k,n));
-    polxvec_frompolyvec(sx[4+ELL], wt.s[4+ELL], ELL*gbits_width);
-    
     // BEGIN ROUND3
+    
 
 
-    f_g_decomp(&st, GNORM(k,n), gbits_width);
-    f_comm(&st, challenges, commitments, C1, C2, m, md);
+
+    polxvec_bin_decompose(wt.s[4+ELL], gs, ELL, gnorm);
+    polxvec_frompolyvec(sx[4+ELL], wt.s[4+ELL], ELL*g_bitwidth);
+    f_gdecomp(&st, gnorm, g_bitwidth);
+    f_comm(&st, challenges, commitments, C1, C2, rp);
 
 
     memcpy(st.h, hashstate, 16);
@@ -961,7 +942,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
     free(wit_vecsx);
     free(commitments);
-    free_challenge_array(challenges, ELL);
+    free_challenge_array(challenges, ELL, rp);
     //free(epsilonx);
     //free(zetax);
     free_witness(&wt); // frees wit_vecs
@@ -973,26 +954,26 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 int main(void)
 {
     // placeholders
-    size_t k = 1000;
-    size_t n = 1000;
-    // todo: replace these with approproate values
-    size_t m = 3;
-    size_t md = 3;
+    R1CSParams rp = {
+	.k = 1000,
+	.n = 1000,
+	.m = {3,3,3}
+    };
 
 
     gmp_randstate_t grand;
     gmp_randinit_default(grand);
-    mpz_t *w = new_mpz_array(n);
-    for (size_t i = 0; i != n; i++) {
+    mpz_t *w = new_mpz_array(rp.n);
+    for (size_t i = 0; i != rp.n; i++) {
 	mpz_urandomb(w[i], grand, N);
     }
 
     mpz_sparsemat A, B, C;
-    init_mpz_sparsemat(&A, n);
-    init_mpz_sparsemat(&B, n);
-    init_mpz_sparsemat(&C, n);
+    init_mpz_sparsemat(&A, rp.n);
+    init_mpz_sparsemat(&B, rp.n);
+    init_mpz_sparsemat(&C, rp.n);
 
-    for (size_t i = 0; i != n; i++) {
+    for (size_t i = 0; i != rp.n; i++) {
         add_entry_ui(&A, i, i, 1);
         add_entry_ui(&B, i, i, 1);
         add_entry(&C, i, i, w[i]);
@@ -1004,31 +985,31 @@ int main(void)
     mpz_set_str(mod, MOD_STR, 10);
 
 
-    polx *comm = _aligned_alloc(64, ((3*k+n)*m + md * ELL*k) * sizeof *comm);
+    polx *comm = _aligned_alloc(64, ((3*rp.k+rp.n)*rp.m[0] + rp.m[1] * ELL*rp.k) * sizeof *comm);
 
     __attribute__((aligned(16)))
     unsigned char seed[16] = {150, 98, 20, 81, 126, 151, 66, 43, 68, 235, 210, 118, 199, 77, 163, 30};
     int64_t nonce = 0;
-    polxvec_almostuniform(comm, (3*k+n)*m + md * ELL * k, seed, nonce);
+    polxvec_almostuniform(comm, (3*rp.k+rp.n)*rp.m[0] + rp.m[1] * ELL * rp.k, seed, nonce);
     polx const *C1[4];
     C1[0] = comm;
-    C1[1] = comm + n*m;
+    C1[1] = comm + rp.n*rp.m[0];
     for (size_t i = 2; i != 4; i++) {
-        C1[i] = C1[i-1] + k*m;
+        C1[i] = C1[i-1] + rp.k*rp.m[0];
     }
     polx const *C2[ELL];
-    C2[0] = comm + (3*k+n)*m;
+    C2[0] = comm + (3*rp.k+rp.n)*rp.m[0];
     for (size_t i = 1; i != ELL; i++) {
-        C2[i] = C2[i-1] + k*md;
+        C2[i] = C2[i-1] + rp.k*rp.m[1];
     }
 
-    r1cs_reduction(&A, &B, &C, C1, C2, w, mod, seed, k, n, m, md);
+    r1cs_reduction(&A, &B, &C, C1, C2, w, mod, seed, &rp);
     free_mpz_sparsemat(&A);
     free_mpz_sparsemat(&B);
     free_mpz_sparsemat(&C);
     free(comm);
     mpz_clear(mod);
-    free_mpz_array(w, n);
+    free_mpz_array(w, rp.n);
 
 }
 
