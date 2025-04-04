@@ -20,12 +20,57 @@
 const char *MOD_STR = "18446744073709551617";
 
 // number of repetitions (l in paper);
-#define ELL 8
+#define ELL 1
 
 
 #define CEILDIV(x,y) ((x + y - 1) / y)
 #define INT_BYTES CEILDIV(N+1,8)
+#define GNORM(k,n) (((4 + ELL)*k+n)*(N/2+3))
 
+//struct R1CSParams {
+//    size_t k;
+//    size_t n;
+//    size_t m;
+//    size_t md;
+//}
+//
+//uint64_t gnorm(R1CSParams const *rparams)
+//{
+//    return ((4+ELL)*rparams->k+rparams->n)*(N/2+3)
+//}
+//
+//uint64_t gbits_width(R1CSParams const *rparams)
+//{
+//    return significant_bits(gnorm(rparams))+1;
+//}
+
+void polz_print2(const polz *a) {
+    for (size_t i = 0; i != N; i++) {
+	int64_t x = a->limbs[0].c[i];
+	for (size_t j = 1; j != L; j++) {
+	    x += a->limbs[j].c[i] * (((int64_t) 1) << (14*j));
+	}
+	printf("%5ldx^%zu", x,i);
+	if (i != N-1) {
+	    printf(" + ");
+	}
+    }
+    printf("\n");
+}
+
+void polx_print2(const polx *a)
+{
+    polz z; 
+    polz_frompolx(&z, a);
+    polz_center(&z);
+    polz_print2(&z);
+}
+
+uint64_t significant_bits(uint64_t x)
+{
+    if (x == 0) return 0;
+    return 64 - __builtin_clzll(x);
+}
 
 mpz_t *new_mpz_array(size_t len)
 {
@@ -43,20 +88,22 @@ void free_mpz_array(mpz_t *arr, size_t len)
     }
     free(arr);
 }
+
 void poly_print(const poly *a, const char *fmt, ...)
 {
     size_t i;
 
     va_list args;
     va_start(args, fmt);
-    vprintf(fmt, args);
-    printf(" = np.array([");
+    //vprintf(fmt, args);
+    //printf(" = np.array([");
     for(i=0; i<N; i++) {
         //printf("%2zu: ",i);
         printf("%d, ",a->vec->c[i]);
         //printf("\n");
     }
-    printf("], dtype='object')\n");
+    //printf("], dtype='object')\n");
+    printf("\n");
     va_end(args);
 }
 
@@ -458,35 +505,50 @@ void squeeze_mpz(mpz_t result, shake128incctx *shakectx)
     mpz_import(result, N/8, 1, 1, 0, 0, buf);
 }
 
-void squeeze_challenges_r1(challenge *challs, size_t count, shake128incctx *shakectx)
+void prepare_challenge_hash(shake128incctx *shakectx, uint8_t *h, polx const *commitment, size_t comm_size)
 {
+    uint8_t *hashbuf = _aligned_alloc(16, comm_size * N * QBYTES);
+    polxvec_bitpack(hashbuf, commitment, comm_size);
+    shake128_inc_init(shakectx);
+    shake128_inc_absorb(shakectx, h, 16);
+    shake128_inc_absorb(shakectx, hashbuf, comm_size * N * QBYTES);
+    shake128_inc_finalize(shakectx);
+    shake128_inc_squeeze(h, 16, shakectx);
+    free(hashbuf);
+}
+
+void get_round1_challenges(challenge *challs, uint8_t *h, polx const *commitment, size_t comm_size,  size_t n_challs)
+{
+    shake128incctx shakectx;
+    prepare_challenge_hash(&shakectx, h, commitment, comm_size);
+
     size_t k = challs[0].k;
-    for (size_t i = 0; i != count; i++) {
+    for (size_t i = 0; i != n_challs; i++) {
 	for (size_t j = 0; j != k; j++) {
-	    squeeze_mpz(challs[i].round1.psi[j], shakectx);
+	    squeeze_mpz(challs[i].round1.psi[j], &shakectx);
 	}
     }
 }
 
-void squeeze_challenges_r2(challenge *challs, size_t count, shake128incctx *shakectx)
+void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment, size_t comm_size, size_t n_challs)
 {
+    shake128incctx shakectx;
+    prepare_challenge_hash(&shakectx, h, commitment, comm_size);
+
     size_t k = challs[0].k;
     size_t m = challs[0].m;
     size_t md = challs[0].md;
 
-    for (size_t i = 0; i != count; i++) {
+    // domain separation never hurt anyone
+    uint64_t nonce_domain = ((uint64_t) 1) << 16;
+    for (size_t i = 0; i != n_challs; i++) {
 	for (size_t j = 0; j != (3+ELL) * k; j++) {
-	    squeeze_mpz(challs[i].round2.alpha[j], shakectx);
+	    squeeze_mpz(challs[i].round2.alpha[j], &shakectx);
 	}
-	mpz_t scratch; 
-	mpz_init(scratch);
-	for (size_t j = 0; j != m+md; j++) {
-	    squeeze_mpz(scratch, shakectx);
-	    polx_frommpz(challs[i].round2.epsilon + j, scratch);
-	}
-	mpz_clear(scratch);
+	polxvec_ternary(challs[i].round2.epsilon, m+md, h, nonce_domain + i);
     }
 }
+
 
 
 // window into challenge
@@ -526,15 +588,6 @@ void squeeze_challenges_r2(challenge *challs, size_t count, shake128incctx *shak
 //}
 
 
-
-void squeeze_challenges(mpz_t *result, size_t count, shake128incctx *shakectx)
-{
-    uint8_t buf[N/8];
-    for (size_t i = 0; i != count; i++) {
-        shake128_inc_squeeze(buf, N/8, shakectx);
-        mpz_import(result[i], N/8, 1, 1, 0, 0, buf);
-    }
-}
 
 void mpz_mul_vec(mpz_t *result, mpz_t const *a, mpz_t const *b, size_t len)
 {
@@ -580,7 +633,7 @@ void mpz_mod_vec(mpz_t *result, mpz_t const *a, mpz_t const mod, size_t len)
 
 uint64_t beta_squared(size_t k, size_t n)
 {
-    return 128. / 30. * ((3+ELL)*k+n)*(N/2+3);
+    return 128. / 30. * (((3+ELL)*k+n)*(N/2+3) + N);
 }
 
 void f_r1cs(prncplstmnt *st, mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, challenge const *challenges, mpz_t const mod) {
@@ -678,13 +731,82 @@ void f_comm(prncplstmnt *st, challenge const *challenges, polx *commitments, pol
     }
 }
 
+int64_t zz_toint64(zz const *a) {
+    int64_t r = a->limbs[L-1];
+    for (size_t i = 1; i != L; i++) {
+	r <<= 14;
+	r += a->limbs[L-1-i];
+    }
+    return r;
+
+}
+
+void polxvec_bin_decompose(poly *r, polx const *a, size_t len, int64_t nudge)
+{
+
+    uint64_t width = significant_bits((uint64_t) nudge) + 1; 
+    assert(width < LOGQ - 1);
+    polz nudge_polz;
+    zz nudgezz;
+    zz_fromint64(&nudgezz, nudge);
+    for (size_t i = 0; i != N; i++) {
+	polz_setcoeff(&nudge_polz, &nudgezz, i);
+    }
+    for (size_t i = 0; i != len; i++) {
+	polz z;
+	polz_frompolx(&z, a+i);
+	polz_center(&z);
+	polz_add(&z, &z, &nudge_polz);
+	for (size_t j = 0; j != N; j++) {
+	    zz coeffzz;
+	    polz_getcoeff(&coeffzz, &z, j);
+	    int64_t coeff = zz_toint64(&coeffzz);
+	    assert(coeff > 0);
+	    for (size_t k = 0; k != width; k++) {
+		r[i*width+k].vec->c[j] =  coeff & 1;
+		coeff >>= 1;
+	    }
+	}
+    }
+}
+
+// sets the ith m-block of r to s*(1,2,4, ..., 2**(m-1))
+void cnst_gadget_vec(polx *r, size_t m, size_t i, int64_t s)
+{
+    int64_t coeffs[N] = {};
+    coeffs[0] = 1;
+    for (size_t j = i*m; j != (i+1)*m; j++) {
+	coeffs[0] *= s;
+	polxvec_fromint64vec(r + j, 1, 1, coeffs);
+	coeffs[0] = (coeffs[0]/s) << 1;
+    }
+}
+
+void f_g_decomp(prncplstmnt *st, int64_t nudge, size_t width)
+{
+    int64_t nudge_coeffs[N];
+    for (size_t i = 0; i != N; i++) {
+        nudge_coeffs[i] = -nudge;
+    }
+    polx nudge_polx;
+    polxvec_fromint64vec(&nudge_polx, 1, 1, nudge_coeffs);
+
+    for (size_t i = 0; i != ELL; i++) {
+        cnst_gadget_vec(st->cnst[i].phi[4+ELL], width, i, -1);
+        polx_add(st->cnst[i].b, st->cnst[i].b, &nudge_polx);
+    }
+}
+
+
 
 // generate proof for Aw \circ Bw = Cw (mod 'mod')
 // C1 and C2 are commitment matrices.
 // A,B,C have dimension k x n
 // m, md are #rows of C1 and C2 respectively
-void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, polx const *const *C1, polx const *const *C2, mpz_t *w, mpz_t const mod, size_t k, size_t n, size_t m, size_t md)
+void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, polx const *const *C1, polx const *const *C2, mpz_t *w, mpz_t const mod, uint8_t *hashstate, size_t k, size_t n, size_t m, size_t md)
 {
+
+    uint64_t gbits_width = significant_bits(GNORM(k,n))+1;
 
     // compute Aw Bw Cw, store contiguously
     mpz_t *mat_prods = new_mpz_array(3*k);
@@ -700,14 +822,16 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         lift_to_coeffs_vector(encoded + (n + i*k) * N, mat_prods + i*k, k);
     }
 
+    size_t wit_vecs_size = (ELL+3)*k + n + ELL*gbits_width;
+
     // poly representations of w||Aw||Bw||Cw
     // buffer has enough space for the rest of the witnesses computed later
-    poly *wit_vecs = _aligned_alloc(64, (n+3*k + ELL*k) * sizeof *wit_vecs);
+    poly *wit_vecs = _aligned_alloc(64, wit_vecs_size * sizeof *wit_vecs);
     polyvec_fromint64vec(wit_vecs, n+3*k, 1, encoded);
     free(encoded);
 
     // polx version of wit_vecs, don't need polx versions for decomposed commitments
-    polx *wit_vecsx = _aligned_alloc(64, (3*k+n + ELL*k) * sizeof *wit_vecsx);
+    polx *wit_vecsx = _aligned_alloc(64, wit_vecs_size * sizeof *wit_vecsx);
     polxvec_frompolyvec(wit_vecsx, wit_vecs, 3*k+n);
 
     // First commitment
@@ -720,22 +844,9 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         polx_matmul_add(commitments, C1[i], wit_vecsx + n + ((i-1)*k), m, k);
     }
 
-    shake128incctx shakectx;
-    shake128_inc_init(&shakectx);
-
-    // TODO also hash public params
-    size_t hashbuf_size = MAX(m,md)*N*QBYTES;
-    uint8_t *hashbuf = _aligned_alloc(16, hashbuf_size);
-    polxvec_bitpack(hashbuf, commitments, m);
-
-    shake128_inc_absorb(&shakectx, hashbuf, N*QBYTES*m);
-
-    // keep old hash ctx around for future absorbing
-    shake128incctx tmp_ctx = shakectx;
-    shake128_inc_finalize(&tmp_ctx);
-
+    // TODO also hash public params into hashstate at somepoint
     challenge *challenges = new_challenge_array(ELL, k, m, md);
-    squeeze_challenges_r1(challenges, ELL, &tmp_ctx);
+    get_round1_challenges(challenges, hashstate, commitments, m, ELL);
 
     // ds[i] = psi[i] * Aw[i]
     mpz_t *ds = new_mpz_array(ELL*k);
@@ -765,35 +876,26 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         polx_matmul_add(commitment2, C2[i], wit_vecsx2 + i*k, md, k);
     }
 
-
-    polxvec_bitpack(hashbuf, commitment2, md);
-    shake128_inc_absorb(&shakectx, hashbuf, N*QBYTES*md);
-
-    // keep old hash context around for futre absorbing
-    tmp_ctx = shakectx;
-    shake128_inc_finalize(&tmp_ctx);
-
-
-    // final challenges
-    squeeze_challenges_r2(challenges, ELL, &tmp_ctx);
-
+    get_round2_challenges(challenges, hashstate, commitment2, md, ELL);
 
     // BEGIN constructing stuff for chihuahua call
 
     // num witness vecs
-    size_t r = 4 + ELL;
+    size_t r = 5 + ELL;
 
     size_t wit_lens[r];
 
     // first witness (w) is length n, rest are k
     wit_lens[0] = n;
-    for (size_t i = 1; i != r; i++) {
+    for (size_t i = 1; i != 4+ELL; i++) {
         wit_lens[i] = k;
     }
+    wit_lens[4+ELL] = gbits_width * ELL;
 
     witness wt = {};
     init_witness_raw_buf(&wt, r, wit_lens, wit_vecs);
     wit_vecs = NULL;
+
 
     // polx version of wt.s already have this as wit_vecsx, but need it in 2d array form
     polx *sx[r];
@@ -818,6 +920,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     init_prncplstmnt_raw(&st, r, wit_lens, betasq, ELL, 1);
     for (size_t i = 0; i != ELL; i++) {
         init_sparsecnst_raw(st.cnst + i, r, r, idx, wit_lens, 1, true, false);
+	polxvec_setzero(st.cnst[i].b, 1);
     }
 
     f_r1cs(&st, A, B, C, challenges, mod);
@@ -828,17 +931,21 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     for (size_t i = 0; i != ELL; i++) {
         sparsecnst_eval(gs + i, &st.cnst[i], sx, &wt);
 	polx_eval(eval, gs + i, 2, mod);
-	*st.cnst[i].b = gs[i];
 	assert(mpz_sgn(eval) == 0);
     }
-
     mpz_clear(eval);
 
+    polxvec_bin_decompose(wt.s[4+ELL], gs, ELL, GNORM(k,n));
+    polxvec_frompolyvec(sx[4+ELL], wt.s[4+ELL], ELL*gbits_width);
+    
+    // BEGIN ROUND3
+
+
+    f_g_decomp(&st, GNORM(k,n), gbits_width);
     f_comm(&st, challenges, commitments, C1, C2, m, md);
 
 
-    shake128_inc_finalize(&shakectx);
-    shake128_inc_squeeze(st.h, 16, &shakectx);
+    memcpy(st.h, hashstate, 16);
     for (size_t i = 0; i != ELL; i++) {
 	sparsecnst_hash(st.h, st.cnst + i, r, wit_lens, 1);
     }
@@ -854,7 +961,6 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
     free(wit_vecsx);
     free(commitments);
-    free(hashbuf);
     free_challenge_array(challenges, ELL);
     //free(epsilonx);
     //free(zetax);
@@ -874,9 +980,11 @@ int main(void)
     size_t md = 3;
 
 
+    gmp_randstate_t grand;
+    gmp_randinit_default(grand);
     mpz_t *w = new_mpz_array(n);
     for (size_t i = 0; i != n; i++) {
-        mpz_set_ui(w[i], i);
+	mpz_urandomb(w[i], grand, N);
     }
 
     mpz_sparsemat A, B, C;
@@ -914,7 +1022,7 @@ int main(void)
         C2[i] = C2[i-1] + k*md;
     }
 
-    r1cs_reduction(&A, &B, &C, C1, C2, w, mod, k, n, m, md);
+    r1cs_reduction(&A, &B, &C, C1, C2, w, mod, seed, k, n, m, md);
     free_mpz_sparsemat(&A);
     free_mpz_sparsemat(&B);
     free_mpz_sparsemat(&C);

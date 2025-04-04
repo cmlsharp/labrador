@@ -84,6 +84,7 @@ def bitrev6(a):
   return t
 
 q = 2**logq - qoffs[logq]
+print(q)
 nlimbs = math.ceil(logq/14)
 P = 1
 nprimes = 0
