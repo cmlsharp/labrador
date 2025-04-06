@@ -47,7 +47,7 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
 {
     rp->k = k;
     rp->n = n;
-    memcpy(m, rp->m, 3*sizeof *m);
+    memcpy(rp->m, m, 3*sizeof *m);
     rp->gnorm = ((4 + ELL)*k+n)*(N/2+3);
     rp->g_bitwidth = significant_bits(rp->gnorm) + 1;
 }
@@ -685,7 +685,9 @@ void f_comm(prncplstmnt *st, challenge const *challenges, polx const *commitment
 	for (size_t j = 0; j != ELL; j++) {
 	    polx_matmul_trans_add(st->cnst[i].phi[4+j], C2[j], challenges[i].round3.tau[1], rp->m[1], st->n[4+j]);
 	}
-	polx_matmul_trans_add(st->cnst[i].phi[4+ELL], C3[0], challenges[i].round3.tau[2], rp->m[2], st->n[4+ELL]);
+	for (size_t j = 0; j != 2; j++) {
+	    polx_matmul_trans_add(st->cnst[i].phi[4+ELL+j], C3[j], challenges[i].round3.tau[2], rp->m[2], st->n[4+ELL+j]);
+	}
 
 	// Now add random linear combination of commitments to constant
 	polx const *comm = commitments;
@@ -924,18 +926,24 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polxvec_bin_decompose(wt.s[4+ELL], gs, ELL, rp->gnorm);
     polxvec_frompolyvec(sx[4+ELL], wt.s[4+ELL], ELL*rp->g_bitwidth);
 
+    // construct g' = sigma_{-1}(g)
     polyvec_sigmam1(wt.s[5+ELL], wt.s[4+ELL], ELL*rp->g_bitwidth);
     polxvec_sigmam1(sx[5+ELL], sx[4+ELL], ELL*rp->g_bitwidth);
 
     polx *commitment3 = commitment2 + rp->m[1];
     polx_matmul(commitment3, C3[0], sx[4+ELL], rp->m[2], rp->g_bitwidth*ELL);
+    for (size_t i = 1; i != 2; i++) {
+	polx_matmul_add(commitment3, C3[i], sx[4+ELL+i], rp->m[2], rp->g_bitwidth*ELL);
+    }
 
     get_round3_challenges(challenges, hashstate, commitment3, ELL, rp);
 
 
     f_gdecomp(&st, rp);
-    f_conj(&st, challenges, rp);
     f_comm(&st, challenges, commitments, C1, C2, C3, rp);
+
+    // constant term constraint time
+    f_conj(&st, challenges, rp);
 
 
     memcpy(st.h, hashstate, 16);
@@ -992,7 +1000,7 @@ int main(void)
 
     size_t c1_size = (3*rp.k+rp.n)*rp.m[0];
     size_t c2_size = rp.m[1] * ELL*rp.k;
-    size_t c3_size = rp.m[2] * ELL * rp.g_bitwidth;
+    size_t c3_size = rp.m[2] * 2*ELL * rp.g_bitwidth;
 
     polx *comm = _aligned_alloc(64, (c1_size + c2_size + c3_size) * sizeof *comm);
 
@@ -1011,8 +1019,9 @@ int main(void)
     for (size_t i = 1; i != ELL; i++) {
         C2[i] = C2[i-1] + rp.k*rp.m[1];
     }
-    polx const *C3[1];
+    polx const *C3[2];
     C3[0] = C2[0] + rp.m[1] * ELL * rp.k;
+    C3[1] = C3[0] + rp.g_bitwidth * ELL * rp.m[2];
 
     r1cs_reduction(&A, &B, &C, C1, C2, C3, w, mod, seed, &rp);
     free_mpz_sparsemat(&A);
