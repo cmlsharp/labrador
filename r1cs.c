@@ -493,11 +493,12 @@ void squeeze_mpz(mpz_t result, shake128incctx *shakectx)
     mpz_import(result, N/8, 1, 1, 0, 0, buf);
 }
 
-void prepare_challenge_hash(shake128incctx *shakectx, uint8_t *h, polx const *commitment, size_t comm_size)
+void prepare_challenge_hash(shake128incctx *shakectx, uint8_t *h, polx const *commitment, size_t comm_size, uint8_t domain)
 {
     uint8_t *hashbuf = _aligned_alloc(16, comm_size * N * QBYTES);
     polxvec_bitpack(hashbuf, commitment, comm_size);
     shake128_inc_init(shakectx);
+    shake128_inc_absorb(shakectx, &domain, 1);
     shake128_inc_absorb(shakectx, h, 16);
     shake128_inc_absorb(shakectx, hashbuf, comm_size * N * QBYTES);
     shake128_inc_finalize(shakectx);
@@ -508,7 +509,7 @@ void prepare_challenge_hash(shake128incctx *shakectx, uint8_t *h, polx const *co
 void get_round1_challenges(challenge *challs, uint8_t *h, polx const *commitment,  size_t n_challs, R1CSParams const *rp)
 {
     shake128incctx shakectx;
-    prepare_challenge_hash(&shakectx, h, commitment, rp->m[0]);
+    prepare_challenge_hash(&shakectx, h, commitment, rp->m[0], 1);
 
     for (size_t i = 0; i != n_challs; i++) {
 	for (size_t j = 0; j != rp->k; j++) {
@@ -520,7 +521,7 @@ void get_round1_challenges(challenge *challs, uint8_t *h, polx const *commitment
 void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment, size_t n_challs, R1CSParams const *rp)
 {
     shake128incctx shakectx;
-    prepare_challenge_hash(&shakectx, h, commitment, rp->m[1]);
+    prepare_challenge_hash(&shakectx, h, commitment, rp->m[1], 2);
 
     // domain separation never hurt anyone
     for (size_t i = 0; i != n_challs; i++) {
@@ -533,7 +534,7 @@ void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment
 void get_round3_challenges(challenge *challs, uint8_t *h, polx const *commitment, size_t n_challs, R1CSParams const *rp)
 {
     shake128incctx shakectx;
-    prepare_challenge_hash(&shakectx, h, commitment, rp->m[2]);
+    prepare_challenge_hash(&shakectx, h, commitment, rp->m[2], 3);
     uint64_t nonce_domain = ((uint64_t) 1) << 16;
     for (size_t i = 0; i != n_challs; i++) {
 	polxvec_ternary(challs[i].round3.tau[0], rp->m[0] + rp->m[1] + rp->m[2], h, nonce_domain + i);
@@ -657,17 +658,23 @@ void f_r1cs(prncplstmnt *st, mpz_sparsemat const *A, mpz_sparsemat const *B, mpz
     
 }
 
-void f_comm(prncplstmnt *st, challenge const *challenges, polx *commitments, polx const *const *C1, polx const *const *C2, R1CSParams const *rp)
+void f_comm(prncplstmnt *st, challenge const *challenges, polx const *commitments, polx const *const *C1, polx const *const *C2, polx const *const *C3, R1CSParams const *rp)
 {
     for (size_t i = 0; i != ELL; i++) {
 	for (size_t j = 0; j != 4; j++) {
 	    polx_matmul_trans_add(st->cnst[i].phi[j], C1[j], challenges[i].round3.tau[0], rp->m[0], st->n[j]);
 	}
 	for (size_t j = 0; j != ELL; j++) {
-	    polx_matmul_trans_add(st->cnst[i].phi[4+j], C2[j], challenges[i].round3.tau[1], rp->m[1], st->n[j]);
+	    polx_matmul_trans_add(st->cnst[i].phi[4+j], C2[j], challenges[i].round3.tau[1], rp->m[1], st->n[4+j]);
 	}
-	polxvec_sprod_add(st->cnst[i].b, commitments, challenges[i].round3.tau[0], rp->m[0]);
-	polxvec_sprod_add(st->cnst[i].b, commitments + rp->m[0], challenges[i].round3.tau[1], rp->m[1]);
+	polx_matmul_trans_add(st->cnst[i].phi[4+ELL], C3[0], challenges[i].round3.tau[2], rp->m[2], st->n[4+ELL]);
+
+	// Now add random linear combination of commitments to constant
+	polx const *comm = commitments;
+	for (size_t j = 0; j != 3; j ++) {
+	    polxvec_sprod_add(st->cnst[i].b, comm, challenges[i].round3.tau[j], rp->m[j]);
+	    comm += rp->m[j];
+	}
     }
 }
 
@@ -888,7 +895,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
 
     f_gdecomp(&st, gnorm, g_bitwidth);
-    f_comm(&st, challenges, commitments, C1, C2, rp);
+    f_comm(&st, challenges, commitments, C1, C2, C3, rp);
 
 
     memcpy(st.h, hashstate, 16);
