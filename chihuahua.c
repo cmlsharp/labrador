@@ -66,10 +66,11 @@ void init_sparsecnst_raw(sparsecnst *cnst, size_t r, size_t nz, const size_t idx
   size_t buflen;
   size_t elen[nz];
   polx *buf;
+  size_t deg2 = MAX(deg,1);
 
   buflen = 0;
   for(i=0;i<nz;i++) {
-    elen[i] = extlen(n[i]*deg,deg);
+    elen[i] = extlen(n[i]*deg2,deg2);
     buflen += elen[i];
   }
 
@@ -77,7 +78,7 @@ void init_sparsecnst_raw(sparsecnst *cnst, size_t r, size_t nz, const size_t idx
   for(i=0;i<nz;i++) {
     cnst->idx[i] = idx[i];
     cnst->off[i] = 0;
-    cnst->len[i] = n[i]*deg;
+    cnst->len[i] = n[i]*deg2;
     cnst->mult[i] = 1;
     cnst->phi[i] = (polx*)buf;
     buf += elen[i];

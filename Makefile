@@ -48,7 +48,7 @@ test_chihuahua: test_chihuahua.c $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) test_chihuahua.c $(SOURCES) -o $@ -lm
 
 test_dachshund: test_dachshund.c $(SOURCES) $(HEADERS)
-	$(CC) $(CFLAGS) test_dachshund.c $(SOURCES) -o $@ -lm
+	$(CC) $(DBGFLAGS) test_dachshund.c $(SOURCES) -o $@ -lm
 
 test_greyhound: test_greyhound.c $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) test_greyhound.c $(SOURCES) -o $@ -lm
