@@ -747,10 +747,35 @@ void f_comm(prncplstmnt *st, challenge const *challenges, polx const *commitment
 void f_conj(prncplstmnt *st, challenge const *challenges)
 {
     //polx *sigma_chall_buf = _aligned_alloc(64, rp->g_bw *  ELL * sizeof *sigma_chall_buf);
-    for (size_t i = 0; i != ELL2; i++)
-    {
+    for (size_t i = 0; i != ELL2; i++) {
 	polxvec_sigmam1(st->cnst[i+ELL].phi[0], challenges[i].round3.omega, st->n[st->cnst[i+ELL].idx[0]]);
 	polxvec_neg(st->cnst[i+ELL].phi[1], challenges[i].round3.omega, st->n[st->cnst[i+ELL].idx[1]]);
+    }
+}
+
+void f_bin(prncplstmnt *st)
+{
+    polx onex = {};
+    poly one = {};
+    one.vec->c[0] = 1;
+    polx_frompoly(&onex, &one);
+
+    polx all_onesx = {};
+    poly all_ones = {};
+    for (size_t i = 0; i != N; i++) {
+        all_ones.vec->c[i] = 1;
+    }
+    polx_frompoly(&all_onesx, &all_ones);
+
+
+    for (size_t i = 0; i != ELL2; i++) {
+        st->cnst[i+ELL].a->len = 1;
+        st->cnst[i+ELL].a->rows[0] = EVALVECS;
+        st->cnst[i+ELL].a->cols[0] = EVALVECS+1;
+        st->cnst[i+ELL].a->coeffs[0] = onex;
+        for (size_t j = 0; j != st->n[EVALVECS]; j++) {
+            polx_sub(st->cnst[i+ELL].phi[1]+j, st->cnst[i+ELL].phi[1]+j, &all_onesx);
+        }
     }
 }
 
@@ -903,18 +928,6 @@ void aux_const(int64_t *ac, R1CSParams const *rp)
 }
 
 // sets the ith m-block of r to s*(1,2,4, ..., 2**(m-1))
-void cnst_gadget_coeff_vec(polx *r, size_t m, size_t i, int64_t s)
-{
-    int64_t coeffs[N] = {};
-    coeffs[0] = 1;
-    for (size_t j = i*m; j != (i+1)*m; j++) {
-	coeffs[0] *= s;
-	polxvec_fromint64vec(r + j, 1, 1, coeffs);
-	coeffs[0] = (coeffs[0]/s) << 1;
-    }
-}
-
-// sets the ith m-block of r to s*(1,2,4, ..., 2**(m-1))
 void cnst_gadget_vec(polx *r, size_t m, size_t i, int64_t s)
 {
     int64_t coeffs[N] = {};
@@ -930,7 +943,7 @@ void f_gdecomp(prncplstmnt *st, R1CSParams const *rp)
 {
     int64_t nudge_coeffs[N];
     for (size_t i = 0; i != N; i++) {
-        nudge_coeffs[i] = -((int64_t) rp->gnorm);
+        nudge_coeffs[i] = -rp->gnorm;
     }
     polx nudge_polx;
     polxvec_fromint64vec(&nudge_polx, 1, 1, nudge_coeffs);
@@ -990,7 +1003,7 @@ void init_r1cs_stmnt_wit(prncplstmnt *st, witness *wt, polx **sx, size_t *offset
 
 
     for (size_t i = ELL; i != ELL+ELL2; i++) {
-        init_sparsecnst_raw(st->cnst + i, NWITVECS, MODVECS, idx_const, wit_lens+EVALVECS, 0, false, false);
+        init_sparsecnst_raw(st->cnst + i, NWITVECS, MODVECS, idx_const, wit_lens+EVALVECS, 0, true, false);
     }
 
 }
@@ -1190,6 +1203,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     // f_conj must come first because it overwrites st.cnst[ELL+i].phis
     f_conj(&st, challenges);
     f_eval(&st, challenges, ac, rp);
+    f_bin(&st);
 
 
 
