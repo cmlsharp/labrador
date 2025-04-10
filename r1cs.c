@@ -582,13 +582,17 @@ void get_round3_challenges(challenge *challs, uint8_t *h, polx const *commitment
     shake128incctx shakectx;
     prepare_challenge_hash(&shakectx, h, commitment, rp->m[2], 3);
     uint64_t nonce = ((uint64_t) 1) << 16;
-    polz *z_vec = _aligned_alloc(64, ELL * sizeof *z_vec);
+    //polz *z_vec = _aligned_alloc(64, ELL * sizeof *z_vec);
+    poly *z_vec = _aligned_alloc(64, ELL * sizeof *z_vec);
     for (size_t i = 0; i != n_challs; i++) {
 	polxvec_ternary(challs[i].round3.tau[0], rp->m[0] + rp->m[1] + rp->m[2] + rp->g_bw*ELL, h, nonce++);
-	//polzvec_uniform(z_vec, ELL, h, nonce++);
+        // These challenges shouldn't be ternary, fix this!!!
+        // Uniform challenges cause polx overflow representation in sparsecnst_check
+        polyvec_ternary(z_vec, ELL, h, nonce++);
 	for (size_t j = 0; j != ELL; j++) {
 	    for (size_t z = 0; z != N; z++) {
 		//challs[i].round3.chi[j*N+z] = polz_getcoeff_int64(z_vec + j, z);
+                challs[i].round3.chi[j*N+z] = z_vec[j].vec->c[z];
 		//challs[i].round3.chi[j*N+z] = 1;
 	    }
 	}
@@ -1107,25 +1111,20 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     
     // compute carries
     mpz_t *carries = new_mpz_array(ELL*(N-1));
-    for (size_t i = 0; i != ELL*(N-1); i++) {
-	size_t poly_idx = i / (N-1);
-	size_t coeff_idx = i % (N-1);
-	mpz_set_si(carries[i], polz_getcoeff_int64(gs_z + poly_idx, coeff_idx));
-	mpz_add_ui(carries[i], carries[i], rp->G);
-	switch (coeff_idx) {
-	case 0:
-	    mpz_sub(carries[i], carries[i], quotients[poly_idx]);
-	    break;
-	case N-2:
-	    mpz_submul_ui(carries[i], quotients[poly_idx], 2);
-	    // intentional fallthrough
-	default:
-	    mpz_add(carries[i], carries[i], carries[i-1]);
-	
-	}
-	assert(mpz_sgn(carries[i]) >= 0);
-	mpz_fdiv_q_ui(carries[i], carries[i], 2);
-        assert(mpz_sizeinbase(carries[i],2) <= rp->h_bw);
+    for (size_t i = 0; i != ELL; i++) {
+        for (size_t j = 0; j != (N-1); j++) {
+            size_t carry_idx = i*(N-1)+j;
+            mpz_set_si(carries[carry_idx], polz_getcoeff_int64(gs_z + i, j));
+            mpz_add_ui(carries[carry_idx], carries[carry_idx], rp->G);
+            if (j == 0) {
+                mpz_sub(carries[carry_idx], carries[carry_idx], quotients[i]);
+            } else {
+                mpz_add(carries[carry_idx], carries[carry_idx], carries[carry_idx-1]);
+            }
+            assert(mpz_sgn(carries[carry_idx]) >= 0);
+            mpz_fdiv_q_ui(carries[carry_idx], carries[carry_idx], 2);
+            assert(mpz_sizeinbase(carries[carry_idx],2) <= rp->h_bw);
+        }
     }
 
     polzvec_nudge(gs_z, gs_z, ELL, rp->gnorm);
