@@ -202,8 +202,12 @@ int sparsecnst_check(const sparsecnst *cnst, polx *sx[], const witness *wt) {
 
   if(cnst->deg)
     ret = polxvec_iszero(b,deg2);
-  else
+  else {
     ret = polx_iszero_constcoeff(b);
+      if (!ret) {
+          polx_print2(b);
+      }
+  }
 
   return ret;
 }

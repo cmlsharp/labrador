@@ -1132,7 +1132,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     for (size_t i = 0; i != ELL; i++) {
         mpz_add_ui(quotients[i], quotients[i], rp->vnorm);
     }
-    //polzvec_center(gs_z, ELL);
+    polzvec_center(gs_z, ELL);
     //mpz_t test;
     //zz testzz;
     //size_t ayo = N-1;
