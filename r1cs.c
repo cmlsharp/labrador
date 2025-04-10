@@ -20,7 +20,7 @@
 const char *MOD_STR = "18446744073709551617";
 
 // number of repetitions (l in paper);
-#define ELL 8
+#define ELL 1
 
 
 #define EVALVECS (4+ELL)
@@ -585,10 +585,10 @@ void get_round3_challenges(challenge *challs, uint8_t *h, polx const *commitment
     polz *z_vec = _aligned_alloc(64, ELL * sizeof *z_vec);
     for (size_t i = 0; i != n_challs; i++) {
 	polxvec_ternary(challs[i].round3.tau[0], rp->m[0] + rp->m[1] + rp->m[2] + rp->g_bw*ELL, h, nonce++);
-	polzvec_uniform(z_vec, ELL, h, nonce++);
+	//polzvec_uniform(z_vec, ELL, h, nonce++);
 	for (size_t j = 0; j != ELL; j++) {
 	    for (size_t z = 0; z != N; z++) {
-		challs[i].round3.chi[j*N+z] = polz_getcoeff_int64(z_vec + j, z);
+		//challs[i].round3.chi[j*N+z] = polz_getcoeff_int64(z_vec + j, z);
 		//challs[i].round3.chi[j*N+z] = 1;
 	    }
 	}
@@ -808,7 +808,7 @@ void f_eval(prncplstmnt *st, challenge const *challenges, uint64_t const *ac, R1
             //printf("HNORM: %zu\n\n", rp->hnorm);
 
 	    gdgt_coeff_vec_add(quot_bin + j * rp->v_bw, rp->v_bw, 1, -2*challenges[i].round3.chi[j*N+(N-1)]);
-            b[0] = (b[0] + rp->vnorm * challenges[i].round3.chi[j*N+(N-1)]) % q;
+            b[0] = (b[0] + 2*rp->vnorm * challenges[i].round3.chi[j*N+(N-1)]) % q;
 
             // Now onto the carries.
             // The (j,0)th equation does not have a carry in so we add its carry out here
