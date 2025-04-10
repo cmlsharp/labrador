@@ -1,5 +1,5 @@
 CC = /usr/bin/clang
-DBGFLAGS = -std=c2x -Wall -Wextra -Wmissing-prototypes -Wredundant-decls -Wno-missing-prototypes\
+DBGFLAGS = -std=gnu2x -Wall -Wextra -Wmissing-prototypes -Wredundant-decls -Wno-missing-prototypes\
   -Wshadow -Wpointer-arith -Wno-unused-function -flto=auto -fsanitize=undefined \
   -fwrapv -march=native -mtune=native -O0 -ggdb
 CFLAGS = -std=c2x -Wall -Wextra -Wredundant-decls \

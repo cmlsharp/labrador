@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <gmp.h>
 
@@ -1014,6 +1015,8 @@ void init_r1cs_stmnt_wit(prncplstmnt *st, witness *wt, polx **sx, size_t *offset
 // A,B,C have dimension rp->k x rp->n
 void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, polx const *const *T1, polx const *const *T2, polx const *const *T3, mpz_t *w, mpz_t const mod, uint8_t *hashstate, R1CSParams const *rp)
 {
+    //struct timespec start, end;
+    //clock_gettime(CLOCK_MONOTONIC, &start);
 
     // wt.s[i] = &wt.s[0] + offsets[i]
     size_t offsets[NWITVECS] = {};
@@ -1174,24 +1177,6 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     // Now that we have c3 = T3(g||g'||...||), we can generate the rest of the challenges
     get_round3_challenges(challenges, hashstate, commitment3, ELL, rp);
 
-    //mpz_t test;
-    //zz testzz;
-    //size_t ayo = 0;
-    //polz_getcoeff(&testzz, gs_z+1, ayo);
-    //mpz_init_set_ui(test,0);
-    //mpz_set_si(test, zz_toint64(&testzz));
-    //mpz_add_ui(test, test, rp->G - rp->gnorm - ac[ayo]);
-    //mpz_submul_ui(test, quotients[1], 1);
-    //mpz_add_ui(test, test, rp->vnorm);
-    //mpz_submul_ui(test, carries[ayo], 2);
-    ////mpz_sub_ui(test, test, ac[N]*2);
-    ////if (ayo != 0) mpz_add(test,test, carries[ayo]);
-    ////mpz_sub_ui(test, test, ac[0]);
-
-    //gmp_printf("test = %Zd\n", test);
-    //printf("challenges[1][0] = %ld\n", challenges[0].round3.chi[1*N+ayo]);
-    //mpz_clear(test);
-
     // Now we add the rest of the constraints
 
     // add <g, -gdgt_i> to each f_i
@@ -1216,10 +1201,22 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     // should pass trivially per above
     assert(principle_verify(&st, &wt) == 0);
 
+    uint64_t running_norm = 0;
+    for (size_t i = 0; i != wt.r; i++) {
+        wt.normsq[i] = polyvec_sprodz(wt.s[i], wt.s[i], wt.n[i]);
+        running_norm += wt.normsq[i];
+    }
+    assert(running_norm <= beta_squared(rp));
 
-    //composite cproof = {};
-    //assert(composite_prove_principle(&cproof, &st, &wt) == 0);
-    //printf("%d\n", composite_verify_principle(&cproof, &st));
+    composite cproof = {};
+    assert(composite_prove_principle(&cproof, &st, &wt) == 0);
+
+    //clock_gettime(CLOCK_MONOTONIC, &end);
+    //long seconds = end.tv_sec - start.tv_sec;
+    //long nano = end.tv_nsec - start.tv_nsec;
+    //double ms = seconds * 1e6 + nano / 1e3;
+    //printf("duration:%lf\n", ms);
+    printf("%d\n", composite_verify_principle(&cproof, &st));
 
     free(commitments);
     free_challenge_array(challenges, ELL, rp);
@@ -1237,7 +1234,7 @@ int main(void)
 {
     // placeholders
     R1CSParams rp;
-    new_r1cs_params(&rp, 100, 100, (size_t [3]) {3,3,3});
+    new_r1cs_params(&rp, 1000, 100, (size_t [3]) {20,20,20});
 
     gmp_randstate_t grand;
     gmp_randinit_default(grand);
