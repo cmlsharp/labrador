@@ -20,7 +20,7 @@
 const char *MOD_STR = "18446744073709551617";
 
 // number of repetitions (l in paper);
-#define ELL 1
+#define ELL 8
 
 
 #define EVALVECS (4+ELL)
@@ -816,14 +816,14 @@ void f_eval(prncplstmnt *st, challenge const *challenges, uint64_t const *ac, R1
 
             // Now onto the carries.
             // The (j,0)th equation does not have a carry in so we add its carry out here
-	    gdgt_coeff_vec_add(carry_bin, rp->h_bw, 1, -2*challenges[i].round3.chi[j*N]);
+	    gdgt_coeff_vec_add(carry_bin + rp->h_bw*(N-1)*j, rp->h_bw, 1, -2*challenges[i].round3.chi[j*N]);
             // (j,1)...(j,N-2)th equations have carry-ins and carry-outs
 	    for (size_t z = 1; z != N-1; z++) {
-		gdgt_coeff_vec_add(carry_bin + (z-1)*rp->h_bw, rp->h_bw, 1, challenges[i].round3.chi[j*N+z]);
-		gdgt_coeff_vec_add(carry_bin + z *rp->h_bw, rp->h_bw, 1, -2*challenges[i].round3.chi[j*N+z]);
+		gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j+z-1), rp->h_bw, 1, challenges[i].round3.chi[j*N+z]);
+		gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j+z), rp->h_bw, 1, -2*challenges[i].round3.chi[j*N+z]);
 	    }
             // (j,N-1)th equation has a carry in as normal ...
-	    gdgt_coeff_vec_add(carry_bin + (N-2)*rp->h_bw, rp->h_bw, 1, challenges[i].round3.chi[j*N+(N-1)]);
+	    gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j+(N-2)), rp->h_bw, 1, challenges[i].round3.chi[j*N+(N-1)]);
             // But a fixed carry out that's stored in ac[N]
             b[0] = (b[0] - ac[N] * challenges[i].round3.chi[j*N+(N-1)]);
 	}
