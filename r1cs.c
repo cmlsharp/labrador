@@ -20,7 +20,10 @@
 const char *MOD_STR = "18446744073709551617";
 
 // number of repetitions (l in paper);
-#define ELL 2
+#define ELL 8
+// Don't need as many cnst constraints because q is larger than smallest
+// prime factor of 2^64+1
+#define ELL2 ((LOGQ+140-1)/LOGQ)
 
 
 #define EVALVECS (4+ELL)
@@ -744,7 +747,7 @@ void f_comm(prncplstmnt *st, challenge const *challenges, polx const *commitment
 void f_conj(prncplstmnt *st, challenge const *challenges)
 {
     //polx *sigma_chall_buf = _aligned_alloc(64, rp->g_bw *  ELL * sizeof *sigma_chall_buf);
-    for (size_t i = 0; i != ELL; i++)
+    for (size_t i = 0; i != ELL2; i++)
     {
 	polxvec_sigmam1(st->cnst[i+ELL].phi[0], challenges[i].round3.omega, st->n[st->cnst[i+ELL].idx[0]]);
 	polxvec_neg(st->cnst[i+ELL].phi[1], challenges[i].round3.omega, st->n[st->cnst[i+ELL].idx[1]]);
@@ -786,7 +789,7 @@ void f_eval(prncplstmnt *st, challenge const *challenges, int64_t const *ac, R1C
     int64_t b[N] = {};
     
     // For each sparse constraint (repition for soundness...)
-    for (size_t i = 0; i != ELL; i++) {
+    for (size_t i = 0; i != ELL2; i++) {
         b[0] = 0;
         memset(phi_coeffs, 0, N*phi_len * sizeof *phi_coeffs);
         // For each g_i...
@@ -975,7 +978,7 @@ void init_r1cs_stmnt_wit(prncplstmnt *st, witness *wt, polx **sx, size_t *offset
 
     uint64_t betasq = beta_squared(rp);
 
-    init_prncplstmnt_raw(st, NWITVECS, wit_lens, betasq, 2*ELL, 1);
+    init_prncplstmnt_raw(st, NWITVECS, wit_lens, betasq, ELL+ELL2, 1);
     for (size_t i = 0; i != ELL; i++) {
         init_sparsecnst_raw(st->cnst + i, NWITVECS, NWITVECS, idx, wit_lens, 1, true, false);
     }
@@ -986,7 +989,7 @@ void init_r1cs_stmnt_wit(prncplstmnt *st, witness *wt, polx **sx, size_t *offset
     }
 
 
-    for (size_t i = ELL; i != 2*ELL; i++) {
+    for (size_t i = ELL; i != ELL+ELL2; i++) {
         init_sparsecnst_raw(st->cnst + i, NWITVECS, MODVECS, idx_const, wit_lens+EVALVECS, 0, false, false);
     }
 
