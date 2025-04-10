@@ -20,7 +20,7 @@
 const char *MOD_STR = "18446744073709551617";
 
 // number of repetitions (l in paper);
-#define ELL 8
+#define ELL 2
 
 
 #define EVALVECS (4+ELL)
@@ -31,13 +31,13 @@ typedef struct {
     size_t k;
     size_t n;
     size_t m[3];
-    uint64_t gnorm;
+    int64_t gnorm;
     uint64_t g_bw;
-    uint64_t vnorm;
+    int64_t vnorm;
     uint64_t v_bw;
-    uint64_t hnorm;
+    int64_t hnorm;
     uint64_t h_bw;
-    uint64_t G;
+    int64_t G;
 } R1CSParams;
 
 uint64_t ceildiv(uint64_t a, uint64_t b)
@@ -588,11 +588,12 @@ void get_round3_challenges(challenge *challs, uint8_t *h, polx const *commitment
 	polxvec_ternary(challs[i].round3.tau[0], rp->m[0] + rp->m[1] + rp->m[2] + rp->g_bw*ELL, h, nonce++);
         // These challenges shouldn't be ternary, fix this!!!
         // Uniform challenges cause polx overflow representation in sparsecnst_check
+        //polzvec_uniform(z_vec, ELL, h, nonce++);
         polyvec_ternary(z_vec, ELL, h, nonce++);
 	for (size_t j = 0; j != ELL; j++) {
 	    for (size_t z = 0; z != N; z++) {
 		//challs[i].round3.chi[j*N+z] = polz_getcoeff_int64(z_vec + j, z);
-                challs[i].round3.chi[j*N+z] = z_vec[j].vec->c[z];
+                challs[i].round3.chi[j*N+z] = z_vec[j].vec->c[z]+1;
 		//challs[i].round3.chi[j*N+z] = 1;
 	    }
 	}
@@ -764,7 +765,7 @@ void gdgt_coeff_vec_add(int64_t *coeffs, size_t m, size_t stride, int64_t s)
 // For large R1CS matrices this is probably gonna be slow
 // It's linear in the r1cs matrix dimensions but big constants
 // but this is very vectorizable in principle (or could parallelize, or both)
-void f_eval(prncplstmnt *st, challenge const *challenges, uint64_t const *ac, R1CSParams const *rp)
+void f_eval(prncplstmnt *st, challenge const *challenges, int64_t const *ac, R1CSParams const *rp)
 {
     // I think < 63 should be sufficient to prevent overflow but 
     // give me a couple of bits as a safety mechanism
@@ -809,22 +810,21 @@ void f_eval(prncplstmnt *st, challenge const *challenges, uint64_t const *ac, R1
 
 	    gdgt_coeff_vec_add(quot_bin + j * rp->v_bw, rp->v_bw, 1, -1*challenges[i].round3.chi[j*N]);
             b[0] = (b[0] + rp->vnorm * challenges[i].round3.chi[j*N]) % q;
-            //printf("HNORM: %zu\n\n", rp->hnorm);
 
-	    gdgt_coeff_vec_add(quot_bin + j * rp->v_bw, rp->v_bw, 1, -2*challenges[i].round3.chi[j*N+(N-1)]);
-            b[0] = (b[0] + 2*rp->vnorm * challenges[i].round3.chi[j*N+(N-1)]) % q;
+            gdgt_coeff_vec_add(quot_bin + j * rp->v_bw, rp->v_bw, 1, -2*challenges[i].round3.chi[j*N+(N-1)]);
+            b[0] = (b[0] - rp->vnorm * challenges[i].round3.chi[j*N+(N-1)]) % q;
 
             // Now onto the carries.
             // The (j,0)th equation does not have a carry in so we add its carry out here
 	    gdgt_coeff_vec_add(carry_bin + rp->h_bw*(N-1)*j, rp->h_bw, 1, -2*challenges[i].round3.chi[j*N]);
             // (j,1)...(j,N-2)th equations have carry-ins and carry-outs
 	    for (size_t z = 1; z != N-1; z++) {
-		gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j+z-1), rp->h_bw, 1, challenges[i].round3.chi[j*N+z]);
-		gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j+z), rp->h_bw, 1, -2*challenges[i].round3.chi[j*N+z]);
+	        gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j + (z-1)), rp->h_bw, 1, challenges[i].round3.chi[j*N+z]);
+	        gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j + z), rp->h_bw, 1, -2*challenges[i].round3.chi[j*N+z]);
 	    }
             // (j,N-1)th equation has a carry in as normal ...
-	    gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j+(N-2)), rp->h_bw, 1, challenges[i].round3.chi[j*N+(N-1)]);
-            // But a fixed carry out that's stored in ac[N]
+            gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j + (N-2)), rp->h_bw, 1, challenges[i].round3.chi[j*N+(N-1)]);
+                // But a fixed carry out that's stored in ac[N]
             b[0] = (b[0] - ac[N] * challenges[i].round3.chi[j*N+(N-1)]);
 	}
         //b[0] = (b[0] + q) % q;
@@ -888,9 +888,9 @@ void mpzvec_bin_decompose(poly *r, mpz_t const *input, size_t len, uint64_t widt
     }
 }
 
-void aux_const(uint64_t *ac, R1CSParams const *rp)
+void aux_const(int64_t *ac, R1CSParams const *rp)
 {
-    uint64_t ac_extra = 0;
+    int64_t ac_extra = 0;
     for (size_t i = 0; i != N; i++) {
 	ac_extra += rp->G;
 	ac[i] = ac_extra % 2;
@@ -1106,7 +1106,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polzvec_center(gs_z, ELL);
 
     // compute aux_consts
-    uint64_t ac[N+1];
+    int64_t ac[N+1];
     aux_const(ac, rp);
     
     // compute carries
@@ -1128,26 +1128,10 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     }
 
     polzvec_nudge(gs_z, gs_z, ELL, rp->gnorm);
+    polzvec_center(gs_z, ELL);
     for (size_t i = 0; i != ELL; i++) {
         mpz_add_ui(quotients[i], quotients[i], rp->vnorm);
     }
-    polzvec_center(gs_z, ELL);
-    //mpz_t test;
-    //zz testzz;
-    //size_t ayo = N-1;
-    //polz_getcoeff(&testzz, gs_z, ayo);
-    //mpz_init(test);
-    //mpz_set_si(test, zz_toint64(&testzz));
-    //mpz_add_ui(test, test, rp->G - ac[ayo]);
-    //mpz_submul_ui(test, quotients[0], 2);
-    ////mpz_add_ui(test, test, rp->vnorm*2);
-    ////mpz_submul_ui(test, carries[ayo], 2);
-    //mpz_sub_ui(test, test, ac[N]*2);
-    //if (ayo != 0) mpz_add(test,test, carries[ayo]);
-    //mpz_sub_ui(test, test, ac[0]);
-
-    //gmp_printf("test = %Zd\n", test);
-    //mpz_clear(test);
 
 
 
@@ -1174,6 +1158,23 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     // Now that we have c3 = T3(g||g'||...||), we can generate the rest of the challenges
     get_round3_challenges(challenges, hashstate, commitment3, ELL, rp);
 
+    //mpz_t test;
+    //zz testzz;
+    //size_t ayo = 0;
+    //polz_getcoeff(&testzz, gs_z+1, ayo);
+    //mpz_init_set_ui(test,0);
+    //mpz_set_si(test, zz_toint64(&testzz));
+    //mpz_add_ui(test, test, rp->G - rp->gnorm - ac[ayo]);
+    //mpz_submul_ui(test, quotients[1], 1);
+    //mpz_add_ui(test, test, rp->vnorm);
+    //mpz_submul_ui(test, carries[ayo], 2);
+    ////mpz_sub_ui(test, test, ac[N]*2);
+    ////if (ayo != 0) mpz_add(test,test, carries[ayo]);
+    ////mpz_sub_ui(test, test, ac[0]);
+
+    //gmp_printf("test = %Zd\n", test);
+    //printf("challenges[1][0] = %ld\n", challenges[0].round3.chi[1*N+ayo]);
+    //mpz_clear(test);
 
     // Now we add the rest of the constraints
 
@@ -1185,7 +1186,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     // constant term constraints
     // f_conj must come first because it overwrites st.cnst[ELL+i].phis
     f_conj(&st, challenges);
-    //f_eval(&st, challenges, ac, rp);
+    f_eval(&st, challenges, ac, rp);
 
 
 
