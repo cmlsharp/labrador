@@ -22,8 +22,8 @@ const char *MOD_STR = "18446744073709551617";
 // number of repetitions (l in paper);
 #define ELL 8
 // Don't need as many cnst constraints because q is larger than smallest
-// prime factor of 2^64+1
-#define ELL2 ((LOGQ+140-1)/LOGQ)
+// prime factor of 2^64+1 (which is 18bits)
+#define ELL2 ((LOGQ+18*ELL-1)/LOGQ)
 
 
 #define EVALVECS (4+ELL)

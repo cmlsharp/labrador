@@ -381,13 +381,9 @@ void polxvec_scale_add(polx *r, const polx *a, size_t len, int64_t s) {
 size_t polxvec_mul_extension(polx *c, const polx *a, const polx *b, size_t len, size_t deg, size_t mult) {
   size_t i,j,k = 0;
 
-  for(i=0;i<mult;i++) {
-      polx_refresh(c+i);
+  for(i=0;i<mult;i++)
     for(j=0;j<K;j++)
       k = polyvec_pointwise_extension(&c[i].vec[j],&a->vec[j],&b[i].vec[j],len,K*mult,deg,&primes[j]);
-    polx_refresh(c+i);
-
-  }
 
   return k;
 }
