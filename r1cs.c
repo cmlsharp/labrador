@@ -841,7 +841,7 @@ void f_eval(prncplstmnt *st, challenge const *challenges, int64_t const *ac, R1C
             b[0] = (b[0] + rp->vnorm * challenges[i].round3.chi[j*N]) % q;
 
             gdgt_coeff_vec_add(quot_bin + j * rp->v_bw, rp->v_bw, 1, -2*challenges[i].round3.chi[j*N+(N-1)]);
-            b[0] = (b[0] - rp->vnorm * challenges[i].round3.chi[j*N+(N-1)]) % q;
+            b[0] = (b[0] + 2*rp->vnorm * challenges[i].round3.chi[j*N+(N-1)]) % q;
 
             // Now onto the carries.
             // The (j,0)th equation does not have a carry in so we add its carry out here
@@ -854,7 +854,7 @@ void f_eval(prncplstmnt *st, challenge const *challenges, int64_t const *ac, R1C
             // (j,N-1)th equation has a carry in as normal ...
             gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j + (N-2)), rp->h_bw, 1, challenges[i].round3.chi[j*N+(N-1)]);
                 // But a fixed carry out that's stored in ac[N]
-            b[0] = (b[0] - ac[N] * challenges[i].round3.chi[j*N+(N-1)]);
+            b[0] = (b[0] - 2*ac[N] * challenges[i].round3.chi[j*N+(N-1)]);
 	}
         //b[0] = (b[0] + q) % q;
         polxvec_fromint64vec(&tmp_b, 1, 1, b);
@@ -1234,7 +1234,7 @@ int main(void)
 {
     // placeholders
     R1CSParams rp;
-    new_r1cs_params(&rp, 1000, 100, (size_t [3]) {20,20,20});
+    new_r1cs_params(&rp, 1000, 1000, (size_t [3]) {20,20,20});
 
     gmp_randstate_t grand;
     gmp_randinit_default(grand);
