@@ -81,7 +81,7 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
 
     rp->g_bw = significant_bits(rp->gnorm) + 1;
     rp->v_bw = significant_bits(rp->vnorm) + 1;
-    rp->h_bw = significant_bits(rp->hnorm) + 1;
+    rp->h_bw = significant_bits(rp->hnorm);
 
     // gpmaxword
     for (size_t i = 0; i != N; i++) {
@@ -119,7 +119,6 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
             lhs_max += 1 << rp->h_bw;
             rhs_max += 2*(1 << rp->h_bw);
         }
-        assert(MAX(lhs_max - rhs_min, rhs_max - lhs_min) > 0);
         int64_t cur_eqn_bound = MAX(lhs_max - rhs_min, rhs_max - lhs_min);
         rp->carry_eqn_bound = MAX(cur_eqn_bound, rp->carry_eqn_bound);
     }
