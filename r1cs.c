@@ -27,9 +27,9 @@ const char *MOD_STR = "18446744073709551617";
 #define ELL2 ((LOGQ+18*ELL-1)/LOGQ)
 
 
-#define EVALVECS (4+ELL)
-#define MODVECS 2
-#define NWITVECS (EVALVECS + MODVECS)
+#define R1CSVECS (4+ELL)
+#define EVALVECS 2
+#define NWITVECS (R1CSVECS + EVALVECS)
 
 typedef struct {
     size_t k;
@@ -41,7 +41,8 @@ typedef struct {
     uint64_t v_bw;
     int64_t hnorm;
     uint64_t h_bw;
-    int64_t G;
+    int64_t G[N];
+    uint64_t carry_eqn_bound;
 } R1CSParams;
 
 uint64_t ceildiv(uint64_t a, uint64_t b)
@@ -53,22 +54,6 @@ uint64_t significant_bits(uint64_t x)
 {
     if (x == 0) return 0;
     return 64 - __builtin_clzll(x);
-}
-
-void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
-{
-    rp->k = k;
-    rp->n = n;
-    memcpy(rp->m, m, 3*sizeof *m);
-    rp->gnorm = ((4 + ELL)*k+n)*(N/2+3);
-    rp->vnorm = 2*rp->gnorm;
-    rp->hnorm = 3*rp->gnorm;
-
-    rp->g_bw = significant_bits(rp->gnorm) + 1;
-    rp->v_bw = significant_bits(rp->vnorm) + 1;
-    rp->h_bw = significant_bits(rp->hnorm)+1;
-    rp->G = 6*rp->gnorm+1;
-    
 }
 
 int64_t zz_toint64(zz const *a)
@@ -83,6 +68,30 @@ int64_t zz_toint64(zz const *a)
     return r;
 
 }
+
+void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
+{
+    rp->k = k;
+    rp->n = n;
+    memcpy(rp->m, m, 3*sizeof *m);
+    rp->gnorm = ((4 + ELL)*k+n)*(N/2+3);
+    rp->vnorm = 2*rp->gnorm;
+    rp->hnorm = (rp->gnorm + 2*rp->vnorm)/2;
+
+    rp->g_bw = significant_bits(rp->gnorm) + 1;
+    rp->v_bw = significant_bits(rp->vnorm) + 1;
+    rp->h_bw = significant_bits(rp->hnorm);
+    for (size_t i = 0; i != N; i++) {
+        rp->G[i] = rp->gnorm;
+    }
+    rp->G[0] += rp->vnorm;
+    rp->G[N-1] += 2*rp->vnorm;
+    rp->carry_eqn_bound = (2*rp->vnorm + rp->gnorm)*2 + rp->hnorm;
+    int64_t q = zz_toint64(&modulus.q);
+    assert(rp->carry_eqn_bound < (uint64_t) q);
+    
+}
+
 
 int64_t polz_getcoeff_int64(polz const *a, int k)
 {
@@ -731,7 +740,7 @@ void f_comm(prncplstmnt *st, challenge const *challenges, polx const *commitment
 	for (size_t j = 0; j != ELL; j++) {
 	    polx_matmul_trans_add(st->cnst[i].phi[4+j], T2[j], challenges[i].round3.tau[1], rp->m[1], st->n[4+j]);
 	}
-	for (size_t j = 0; j != MODVECS; j++) {
+	for (size_t j = 0; j != EVALVECS; j++) {
 	    polx_matmul_trans_add(st->cnst[i].phi[4+ELL+j], T3[j], challenges[i].round3.tau[2], rp->m[2], st->n[4+ELL+j]);
 	}
 
@@ -771,10 +780,10 @@ void f_bin(prncplstmnt *st)
 
     for (size_t i = 0; i != ELL2; i++) {
         st->cnst[i+ELL].a->len = 1;
-        st->cnst[i+ELL].a->rows[0] = EVALVECS;
-        st->cnst[i+ELL].a->cols[0] = EVALVECS+1;
+        st->cnst[i+ELL].a->rows[0] = R1CSVECS;
+        st->cnst[i+ELL].a->cols[0] = R1CSVECS+1;
         st->cnst[i+ELL].a->coeffs[0] = onex;
-        for (size_t j = 0; j != st->n[EVALVECS]; j++) {
+        for (size_t j = 0; j != st->n[R1CSVECS]; j++) {
             polx_sub(st->cnst[i+ELL].phi[1]+j, st->cnst[i+ELL].phi[1]+j, &all_onesx);
         }
     }
@@ -799,7 +808,7 @@ void f_eval(prncplstmnt *st, challenge const *challenges, int64_t const *ac, R1C
     // I think < 63 should be sufficient to prevent overflow but 
     // give me a couple of bits as a safety mechanism
     // more mod reductions could relax this
-    assert(significant_bits(rp->G) + LOGQ <= 60);
+    assert(significant_bits(rp->carry_eqn_bound) + LOGQ <= 60);
     size_t phi_len = st->n[st->cnst[ELL].idx[1]];
 
     int64_t *phi_coeffs = _malloc(phi_len * N * sizeof *phi_coeffs);
@@ -830,7 +839,7 @@ void f_eval(prncplstmnt *st, challenge const *challenges, int64_t const *ac, R1C
 		// TODO: consider doing fewer modulo reductions when possible
 		// OTOH figure out if G*challenges[i].round3.chi[j*N+z] overflow 63 bits for large moduli??
                 // Add + rp->G - AC[z] to the (j,z)th carry equation
-                b[0] = (b[0] + (rp->G - rp->gnorm - ac[z]) * challenges[i].round3.chi[j*N+z]) % q;
+                b[0] = (b[0] + (rp->G[z] - rp->gnorm - ac[z]) * challenges[i].round3.chi[j*N+z]) % q;
 	    }
             // The RHS of the (j,z)th equation has v_j * p_z 
             // where p = [1, 0,...,0,2] and v_j is g_j(2)/p(2) (note: p(2) = 2^d+1)
@@ -921,25 +930,25 @@ void aux_const(int64_t *ac, R1CSParams const *rp)
 {
     int64_t ac_extra = 0;
     for (size_t i = 0; i != N; i++) {
-	ac_extra += rp->G;
+	ac_extra += rp->G[i];
 	ac[i] = ac_extra % 2;
 	ac_extra >>= 1;
     }
     ac[N] = ac_extra;
 }
 
-// sets the ith m-block of r to s*(1,2,4, ..., 2**(m-1))
-void cnst_gadget_vec(polx *r, size_t m, size_t i, int64_t s)
+// returns vector of constant polynomials (1, 2, ..., 2^{m-1}) 
+void polxvec_gdgt(polx *r, size_t m)
 {
     int64_t coeffs[N] = {};
     coeffs[0] = 1;
-    for (size_t j = i*m; j != (i+1)*m; j++) {
-	coeffs[0] *= s;
-	polxvec_fromint64vec(r + j, 1, 1, coeffs);
-	coeffs[0] = (coeffs[0]/s) << 1;
+    for (size_t i = 0; i != m; i++) {
+	polxvec_fromint64vec(r + i, 1, 1, coeffs);
+	coeffs[0] <<= 1;
     }
 }
 
+// Add -g_i to st.cnst[i] for all i in ELL
 void f_gdecomp(prncplstmnt *st, R1CSParams const *rp)
 {
     int64_t nudge_coeffs[N];
@@ -950,22 +959,29 @@ void f_gdecomp(prncplstmnt *st, R1CSParams const *rp)
     polxvec_fromint64vec(&nudge_polx, 1, 1, nudge_coeffs);
 
     for (size_t i = 0; i != ELL; i++) {
-        cnst_gadget_vec(st->cnst[i].phi[4+ELL], rp->g_bw, i, -1);
+        polx *gdgt = st->cnst[i].phi[4+ELL] + i*rp->g_bw;
+        polxvec_gdgt(gdgt, rp->g_bw);
+        polxvec_neg(gdgt, gdgt, rp->g_bw);
         polx_add(st->cnst[i].b, st->cnst[i].b, &nudge_polx);
     }
 }
 
 
+// Initialize Chihuahua statement st, witness wt, sx, and offsets
+// sx will the polx version of wt->s. Both sx and wt->s are allocated as one big buffer stored in sx[0] and wt->s[0]
+// such that sx[i] = sx[0] + offsets[i] and wt.s[i] = wt.s[0] + offsets[i]
 void init_r1cs_stmnt_wit(prncplstmnt *st, witness *wt, polx **sx, size_t *offsets, R1CSParams const *rp)
 {
     size_t wit_lens[NWITVECS] = {};
 
     // first witness (w) is length n, rest are k
     wit_lens[0] = rp->n;
-    for (size_t i = 1; i != EVALVECS; i++) {
+    for (size_t i = 1; i != R1CSVECS; i++) {
         wit_lens[i] = rp->k;
     }
-    wit_lens[EVALVECS] = wit_lens[EVALVECS+1] = rp->g_bw * ELL + ceildiv(ELL*rp->v_bw, N) + ceildiv(ELL*(N-1)*rp->h_bw, N);
+
+    // Then we have our two binary vectors for the mod (2^d+1) evaluation
+    wit_lens[R1CSVECS] = wit_lens[R1CSVECS+1] = rp->g_bw * ELL + ceildiv(ELL*rp->v_bw, N) + ceildiv(ELL*(N-1)*rp->h_bw, N);
 
     size_t buflen = 0;
     for (size_t i = 0; i != NWITVECS; i++) {
@@ -974,17 +990,15 @@ void init_r1cs_stmnt_wit(prncplstmnt *st, witness *wt, polx **sx, size_t *offset
     }
 
     poly *wit_vecs = _aligned_alloc(64, buflen * sizeof *wit_vecs);
-    polx *wit_vecsx = _aligned_alloc(64, buflen * sizeof *wit_vecsx);
 
     init_witness_raw_buf(wt, NWITVECS, wit_lens, wit_vecs);
 
-    // polx version of wt.s already have this as wit_vecsx, but need it in 2d array form
-    sx[0] = wit_vecsx;
-    wt->normsq[0] = polyvec_sprodz(wt->s[0], wt->s[0], wit_lens[0]);
-    for (size_t i = 1; i != NWITVECS; i++) {
-        wt->normsq[i] = polyvec_sprodz(wt->s[i], wt->s[i], wit_lens[i]);
-        sx[i] = sx[i-1] + wit_lens[i-1];
+    // sx[i] will be the polx version of of wt->s[i]
+    sx[0] = _aligned_alloc(64, buflen * sizeof **sx);
+    for (size_t i = 0; i != NWITVECS; i++) {
+        sx[i] = sx[0] + offsets[i];
     }
+
     size_t idx[NWITVECS];
     for (size_t i = 0; i != NWITVECS; i++) {
 	idx[i] = i;
@@ -997,16 +1011,44 @@ void init_r1cs_stmnt_wit(prncplstmnt *st, witness *wt, polx **sx, size_t *offset
         init_sparsecnst_raw(st->cnst + i, NWITVECS, NWITVECS, idx, wit_lens, 1, true, false);
     }
 
-    size_t idx_const[MODVECS] = {};
-    for (size_t i = 0; i != MODVECS; i++) {
-	idx_const[i] = EVALVECS+i;
+    // For the const term constraints, only our evalvecs are non-zero
+    size_t idx_const[EVALVECS] = {};
+    for (size_t i = 0; i != EVALVECS; i++) {
+	idx_const[i] = R1CSVECS+i;
     }
-
 
     for (size_t i = ELL; i != ELL+ELL2; i++) {
-        init_sparsecnst_raw(st->cnst + i, NWITVECS, MODVECS, idx_const, wit_lens+EVALVECS, 0, true, false);
+        init_sparsecnst_raw(st->cnst + i, NWITVECS, EVALVECS, idx_const, wit_lens+R1CSVECS, 0, true, false);
     }
 
+}
+
+
+void check_carry_equations(polz const *gs_z, mpz_t const *carries, mpz_t const *quotients, int64_t const *ac, R1CSParams const *rp) {
+    mpz_t lhs, rhs;
+    mpz_inits(lhs,rhs,NULL);
+    int64_t p[N] = {};
+    p[0] = 1;
+    p[N-1] = 2;
+    for (size_t i = 0; i != ELL; i++) {
+        mpz_t carry_in;
+        mpz_init_set_ui(carry_in, 0);
+        for (size_t j = 0; j != N; j++) {
+            int64_t gij = polz_getcoeff_int64(gs_z +i, j);
+            mpz_set_si(lhs, gij);
+            mpz_add_ui(lhs, lhs, rp->G[j]);
+            mpz_add(lhs,lhs, carry_in);
+            mpz_mul_ui(rhs, quotients[i], p[j]);
+            if (j != N-1) {
+                mpz_addmul_ui(rhs, carries[i*(N-1) + j], 2);
+                mpz_set(carry_in, carries[i*(N-1) + j]);
+            } else {
+                mpz_add_ui(rhs, rhs, 2*ac[N]);
+            }
+            mpz_add_ui(rhs,rhs, ac[j]);
+            assert(mpz_cmp(lhs, rhs) == 0);
+        }
+    }
 }
 
 
@@ -1111,8 +1153,8 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     mpz_t remainder; 
     mpz_init(remainder);
     for (size_t i = 0; i != ELL; i++) {
-	// Now we evaluate f_r1cs. Set st.cnst[i].nz to EVALVECS for performance
-	st.cnst[i].nz = EVALVECS;
+	// Now we evaluate f_r1cs. Set st.cnst[i].nz to R1CSVECS for performance
+	st.cnst[i].nz = R1CSVECS;
         sparsecnst_eval(gs + i, &st.cnst[i], sx, &wt);
 	st.cnst[i].nz = NWITVECS;
 	polx_eval(quotients[i], gs + i, 2, NULL);
@@ -1134,7 +1176,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         for (size_t j = 0; j != (N-1); j++) {
             size_t carry_idx = i*(N-1)+j;
             mpz_set_si(carries[carry_idx], polz_getcoeff_int64(gs_z + i, j));
-            mpz_add_ui(carries[carry_idx], carries[carry_idx], rp->G);
+            mpz_add_ui(carries[carry_idx], carries[carry_idx], rp->G[j]);
             if (j == 0) {
                 mpz_sub(carries[carry_idx], carries[carry_idx], quotients[i]);
             } else {
@@ -1146,6 +1188,8 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         }
     }
 
+    // We need to make gs and quotients non-negative before we binary decompose them
+    // This is "subtracted off" in f_eval
     polzvec_nudge(gs_z, gs_z, ELL, rp->gnorm);
     polzvec_center(gs_z, ELL);
     for (size_t i = 0; i != ELL; i++) {
@@ -1153,26 +1197,22 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     }
 
 
-
-    //polx_print2(gs);
-    //print_mpz_array(quotients, ELL);
-
     // BEGIN ROUND3
-    polzvec_bin_decompose(wt.s[EVALVECS], gs_z, ELL, rp->g_bw);
-    mpzvec_bin_decompose(wt.s[EVALVECS] + rp->g_bw * ELL , quotients, ELL, rp->v_bw);
-    mpzvec_bin_decompose(wt.s[EVALVECS] + rp->g_bw * ELL + ceildiv(ELL*rp->v_bw, N), carries, ELL*(N-1), rp->h_bw);
-    //poly_print(wt.s[EVALVECS]+rp->g_bw * ELL + ceildiv(ELL*rp->v_bw, N), "");
+    polzvec_bin_decompose(wt.s[R1CSVECS], gs_z, ELL, rp->g_bw);
+    mpzvec_bin_decompose(wt.s[R1CSVECS] + rp->g_bw * ELL , quotients, ELL, rp->v_bw);
+    mpzvec_bin_decompose(wt.s[R1CSVECS] + rp->g_bw * ELL + ceildiv(ELL*rp->v_bw, N), carries, ELL*(N-1), rp->h_bw);
+    //poly_print(wt.s[R1CSVECS]+rp->g_bw * ELL + ceildiv(ELL*rp->v_bw, N), "");
 
-    polyvec_sigmam1(wt.s[EVALVECS+1], wt.s[EVALVECS], st.n[EVALVECS+1]);
+    polyvec_sigmam1(wt.s[R1CSVECS+1], wt.s[R1CSVECS], st.n[R1CSVECS+1]);
 
-    for (size_t i = EVALVECS; i != NWITVECS; i++) {
+    for (size_t i = R1CSVECS; i != NWITVECS; i++) {
 	polxvec_frompolyvec(sx[i], wt.s[i], st.n[i]);
     }
 
 
     polx *commitment3 = commitment2 + rp->m[1];
-    polx_matmul(commitment3, T3[0], sx[EVALVECS], rp->m[2], st.n[EVALVECS]);
-    polx_matmul_add(commitment3, T3[1], sx[EVALVECS+1], rp->m[2], st.n[EVALVECS+1]);
+    polx_matmul(commitment3, T3[0], sx[R1CSVECS], rp->m[2], st.n[R1CSVECS]);
+    polx_matmul_add(commitment3, T3[1], sx[R1CSVECS+1], rp->m[2], st.n[R1CSVECS+1]);
 
     // Now that we have c3 = T3(g||g'||...||), we can generate the rest of the challenges
     get_round3_challenges(challenges, hashstate, commitment3, ELL, rp);
@@ -1234,7 +1274,7 @@ int main(void)
 {
     // placeholders
     R1CSParams rp;
-    new_r1cs_params(&rp, 1000, 1000, (size_t [3]) {20,20,20});
+    new_r1cs_params(&rp, 524288, 1000, (size_t [3]) {20,20,20});
 
     gmp_randstate_t grand;
     gmp_randinit_default(grand);
@@ -1280,7 +1320,7 @@ int main(void)
     for (size_t i = 1; i != ELL; i++) {
         T2[i] = T2[i-1] + rp.k*rp.m[1];
     }
-    polx const *T3[MODVECS];
+    polx const *T3[EVALVECS];
     T3[0] = T2[0] + rp.m[1] * ELL * rp.k;
     T3[1] = T3[0] + (ELL*rp.g_bw + ceildiv(ELL*rp.v_bw, N) + ceildiv(ELL*(N-1)*rp.h_bw, N)) * rp.m[2];
 
