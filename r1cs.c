@@ -32,17 +32,18 @@ const char *MOD_STR = "18446744073709551617";
 #define NWITVECS (R1CSVECS + EVALVECS)
 
 typedef struct {
-    size_t k;
-    size_t n;
-    size_t m[3];
-    int64_t gnorm;
-    uint64_t g_bw;
-    int64_t vnorm;
-    uint64_t v_bw;
-    int64_t hnorm;
-    uint64_t h_bw;
-    int64_t G[N];
-    uint64_t carry_eqn_bound;
+    size_t k; // R1CS matrix rows
+    size_t n; // R1CS matrix columns
+    size_t m[3]; // Commitment sizes for each round
+    int64_t gnorm; // Norm bound on coefficients of g_is
+    uint64_t g_bw; // Max bit width of g_is
+    int64_t vnorm; // Norm bound on coefficients of quotients
+    uint64_t v_bw; // Max bit width of quotients
+    int64_t hnorm; // Norm bound on carries
+    uint64_t h_bw; // Max bit width of carries
+    int64_t G[N]; // Value guaranteed to make ith carry equation non-negative
+    int64_t ac[N+1]; // Aux constants that "correct" for having added G[N] in carry equation
+    int64_t carry_eqn_bound; // Largest value that could possibly arise from any carry equation
 } R1CSParams;
 
 uint64_t ceildiv(uint64_t a, uint64_t b)
@@ -81,14 +82,50 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
     rp->g_bw = significant_bits(rp->gnorm) + 1;
     rp->v_bw = significant_bits(rp->vnorm) + 1;
     rp->h_bw = significant_bits(rp->hnorm);
+
+    // gpmaxword
     for (size_t i = 0; i != N; i++) {
         rp->G[i] = rp->gnorm;
     }
     rp->G[0] += rp->vnorm;
     rp->G[N-1] += 2*rp->vnorm;
-    rp->carry_eqn_bound = (2*rp->vnorm + rp->gnorm)*2 + rp->hnorm;
+
+    // Aux consts
+    for (size_t i = 0; i != N; i++) {
+	rp->ac[N] += rp->G[i];
+	rp->ac[i] = rp->ac[N] % 2;
+	rp->ac[N] >>= 1;
+    }
+
+    // Sanity check, just to make sure q is big enough that the carry equations don't overflow
+    for (size_t i = 0; i != N; i++) {
+        int64_t lhs_min = 0, lhs_max = 0;
+        int64_t rhs_min = 0, rhs_max = 0;
+        lhs_min += rp->G[i] - rp->gnorm;
+        lhs_max += rp->G[i] - rp->gnorm + (1 << rp->g_bw); // could probably be 2*gnorm instead which is tighter since g is constrained to be "correct" by other constraints
+        rhs_min += rp->ac[i];
+        rhs_max += rp->ac[i];
+        if (i == 0) {
+            rhs_min -= rp->vnorm;
+            rhs_max += (1 << rp->v_bw) - rp->vnorm;
+            rhs_max += 2*(1 << rp->h_bw);
+        } else if (i == N-1) {
+            rhs_min -= 2*rp->vnorm;
+            rhs_max += 2*((1 << rp->v_bw) - rp->vnorm);
+            lhs_max += 1 << rp->h_bw;
+            rhs_min += 2*rp->ac[N];
+            rhs_max += 2*rp->ac[N];
+        } else {
+            lhs_max += 1 << rp->h_bw;
+            rhs_max += 2*(1 << rp->h_bw);
+        }
+        assert(MAX(lhs_max - rhs_min, rhs_max - lhs_min) > 0);
+        int64_t cur_eqn_bound = MAX(lhs_max - rhs_min, rhs_max - lhs_min);
+        rp->carry_eqn_bound = MAX(cur_eqn_bound, rp->carry_eqn_bound);
+    }
+
     int64_t q = zz_toint64(&modulus.q);
-    assert(rp->carry_eqn_bound < (uint64_t) q);
+    assert(rp->carry_eqn_bound < q);
     
 }
 
@@ -800,15 +837,12 @@ void gdgt_coeff_vec_add(int64_t *coeffs, size_t m, size_t stride, int64_t s)
 }
 
 // At some point it would be nice to write this using AVX-512 instructions
-// For large R1CS matrices this is probably gonna be slow
-// It's linear in the r1cs matrix dimensions but big constants
-// but this is very vectorizable in principle (or could parallelize, or both)
-void f_eval(prncplstmnt *st, challenge const *challenges, int64_t const *ac, R1CSParams const *rp)
+void f_eval(prncplstmnt *st, challenge const *challenges, R1CSParams const *rp)
 {
     // I think < 63 should be sufficient to prevent overflow but 
     // give me a couple of bits as a safety mechanism
     // more mod reductions could relax this
-    assert(significant_bits(rp->carry_eqn_bound) + LOGQ <= 60);
+    //assert(significant_bits(rp->carry_eqn_bound) + LOGQ <= 60);
     size_t phi_len = st->n[st->cnst[ELL].idx[1]];
 
     int64_t *phi_coeffs = _malloc(phi_len * N * sizeof *phi_coeffs);
@@ -839,7 +873,7 @@ void f_eval(prncplstmnt *st, challenge const *challenges, int64_t const *ac, R1C
 		// TODO: consider doing fewer modulo reductions when possible
 		// OTOH figure out if G*challenges[i].round3.chi[j*N+z] overflow 63 bits for large moduli??
                 // Add + rp->G - AC[z] to the (j,z)th carry equation
-                b[0] = (b[0] + (rp->G[z] - rp->gnorm - ac[z]) * challenges[i].round3.chi[j*N+z]) % q;
+                b[0] = (b[0] + (rp->G[z] - rp->gnorm - rp->ac[z]) * challenges[i].round3.chi[j*N+z]) % q;
 	    }
             // The RHS of the (j,z)th equation has v_j * p_z 
             // where p = [1, 0,...,0,2] and v_j is g_j(2)/p(2) (note: p(2) = 2^d+1)
@@ -863,7 +897,7 @@ void f_eval(prncplstmnt *st, challenge const *challenges, int64_t const *ac, R1C
             // (j,N-1)th equation has a carry in as normal ...
             gdgt_coeff_vec_add(carry_bin + rp->h_bw*((N-1)*j + (N-2)), rp->h_bw, 1, challenges[i].round3.chi[j*N+(N-1)]);
                 // But a fixed carry out that's stored in ac[N]
-            b[0] = (b[0] - 2*ac[N] * challenges[i].round3.chi[j*N+(N-1)]);
+            b[0] = (b[0] - 2*rp->ac[N] * challenges[i].round3.chi[j*N+(N-1)]);
 	}
         //b[0] = (b[0] + q) % q;
         polxvec_fromint64vec(&tmp_b, 1, 1, b);
@@ -926,16 +960,6 @@ void mpzvec_bin_decompose(poly *r, mpz_t const *input, size_t len, uint64_t widt
     }
 }
 
-void aux_const(int64_t *ac, R1CSParams const *rp)
-{
-    int64_t ac_extra = 0;
-    for (size_t i = 0; i != N; i++) {
-	ac_extra += rp->G[i];
-	ac[i] = ac_extra % 2;
-	ac_extra >>= 1;
-    }
-    ac[N] = ac_extra;
-}
 
 // returns vector of constant polynomials (1, 2, ..., 2^{m-1}) 
 void polxvec_gdgt(polx *r, size_t m)
@@ -1024,7 +1048,7 @@ void init_r1cs_stmnt_wit(prncplstmnt *st, witness *wt, polx **sx, size_t *offset
 }
 
 
-void check_carry_equations(polz const *gs_z, mpz_t const *carries, mpz_t const *quotients, int64_t const *ac, R1CSParams const *rp) {
+void check_carry_equations(polz const *gs_z, mpz_t const *carries, mpz_t const *quotients, R1CSParams const *rp) {
     mpz_t lhs, rhs;
     mpz_inits(lhs,rhs,NULL);
     int64_t p[N] = {};
@@ -1043,9 +1067,9 @@ void check_carry_equations(polz const *gs_z, mpz_t const *carries, mpz_t const *
                 mpz_addmul_ui(rhs, carries[i*(N-1) + j], 2);
                 mpz_set(carry_in, carries[i*(N-1) + j]);
             } else {
-                mpz_add_ui(rhs, rhs, 2*ac[N]);
+                mpz_add_ui(rhs, rhs, 2*rp->ac[N]);
             }
-            mpz_add_ui(rhs,rhs, ac[j]);
+            mpz_add_ui(rhs,rhs, rp->ac[j]);
             assert(mpz_cmp(lhs, rhs) == 0);
         }
     }
@@ -1166,10 +1190,6 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polzvec_frompolxvec(gs_z, gs, ELL);
     polzvec_center(gs_z, ELL);
 
-    // compute aux_consts
-    int64_t ac[N+1];
-    aux_const(ac, rp);
-    
     // compute carries
     mpz_t *carries = new_mpz_array(ELL*(N-1));
     for (size_t i = 0; i != ELL; i++) {
@@ -1227,7 +1247,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     // constant term constraints
     // f_conj must come first because it overwrites st.cnst[ELL+i].phis
     f_conj(&st, challenges);
-    f_eval(&st, challenges, ac, rp);
+    f_eval(&st, challenges, rp);
     f_bin(&st);
 
 
@@ -1274,7 +1294,7 @@ int main(void)
 {
     // placeholders
     R1CSParams rp;
-    new_r1cs_params(&rp, 524288, 1000, (size_t [3]) {20,20,20});
+    new_r1cs_params(&rp, 100, 100, (size_t [3]) {20,20,20});
 
     gmp_randstate_t grand;
     gmp_randinit_default(grand);
