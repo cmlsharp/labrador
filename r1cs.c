@@ -81,7 +81,7 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
 
     rp->g_bw = significant_bits(rp->gnorm) + 1;
     rp->v_bw = significant_bits(rp->vnorm) + 1;
-    rp->h_bw = significant_bits(rp->hnorm);
+    rp->h_bw = significant_bits(rp->hnorm) + 1;
 
     // gpmaxword
     for (size_t i = 0; i != N; i++) {
