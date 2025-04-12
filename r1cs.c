@@ -601,7 +601,6 @@ void get_round1_challenges(challenges *challs, uint8_t *h, polx const *commitmen
             squeeze_mpz(challs->psis[i][j], &shakectx);
         }
     }
-    print_mpz_array(challs->psis[0], ELL*rp->k);
 }
 void get_round2_challenges(challenges *challs, uint8_t *h, polx const *commitment, R1CSParams const *rp)
 {
@@ -1213,7 +1212,6 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polzvec_bin_decompose(wt.s[R1CSVECS], gs_z, ELL, rp->g_bw);
     mpzvec_bin_decompose(wt.s[R1CSVECS] + rp->g_bw * ELL, quotients, ELL, rp->v_bw);
     mpzvec_bin_decompose(wt.s[R1CSVECS] + rp->g_bw * ELL + ceildiv(ELL*rp->v_bw, N), carries, ELL*(N-1), rp->h_bw);
-    //poly_print(wt.s[R1CSVECS]+rp->g_bw * ELL + ceildiv(ELL*rp->v_bw, N), "");
 
     polyvec_sigmam1(wt.s[R1CSVECS+1], wt.s[R1CSVECS], st.n[R1CSVECS+1]);
 
