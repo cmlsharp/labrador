@@ -17,20 +17,33 @@
 #include "chihuahua.h"
 #include "pack.h"
 
+
+// TODOS:
+//  High Priority:
+//    * Fully flesh out fiat shamir, hash public params etc etc 
+//    * Blind commitments for ZK with LWE randomness, incorporate this into constraints
+//    * I-R1CS + public statement
+//    * compose with LNP for ZK (after R1CS reduction happens, but before we give to Labrador?)
+//  Low Priority:
+//    * Maybe consider a different representation of quotient*(2^d+1) with lower norm?
+//    * Parallelize where possible
+//    * Vectorize binary decomposition/generation of phi vector
+//    * Collapse (a,c,w) into a single vector
+
 // 2**64+1
 const char *MOD_STR = "18446744073709551617";
 
 // number of repetitions (l in paper);
 #define ELL 8
 // Don't need as many cnst constraints because q is larger than smallest
-// prime factor of 2^64+1 (which is 18bits)
+// prime factor of 2^64+1 (which is 18bits) So to get 18*ELL bits 
+// of security we need ceil(18*ELL/LOGQ) repitions
 #define ELL2 ((LOGQ+18*ELL-1)/LOGQ)
 
 
 #define R1CSVECS (4+ELL)
 #define EVALVECS 2
 #define NWITVECS (R1CSVECS + EVALVECS)
-
 typedef struct {
     size_t k; // R1CS matrix rows
     size_t n; // R1CS matrix columns
@@ -102,7 +115,8 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
         int64_t lhs_min = 0, lhs_max = 0;
         int64_t rhs_min = 0, rhs_max = 0;
         lhs_min += rp->G[i] - rp->gnorm;
-        lhs_max += rp->G[i] - rp->gnorm + (1 << rp->g_bw); // could probably be 2*gnorm instead which is tighter since g is constrained to be "correct" by other constraints
+        // could probably be 2*gnorm instead which is tighter since g is constrained to be "correct" by other constraints
+        lhs_max += rp->G[i] - rp->gnorm + (1 << rp->g_bw);
         rhs_min += rp->ac[i];
         rhs_max += rp->ac[i];
         if (i == 0) {
@@ -122,10 +136,8 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
         int64_t cur_eqn_bound = MAX(lhs_max - rhs_min, rhs_max - lhs_min);
         rp->carry_eqn_bound = MAX(cur_eqn_bound, rp->carry_eqn_bound);
     }
-
     int64_t q = zz_toint64(&modulus.q);
     assert(rp->carry_eqn_bound < q);
-
 }
 
 
@@ -198,7 +210,7 @@ void poly_print(const poly *a, const char *fmt, ...)
 
 
 // update h with hash of constraints in sparsecnst
-// TODO update w/ sparse representation
+// TODO: this is definitely insecure atm, just copied from chihuahua implementation
 void sparsecnst_hash(uint8_t h[16], sparsecnst const *cnst, size_t nz,
                      const size_t n[nz], size_t deg)
 {
@@ -240,7 +252,7 @@ void sparsecnst_hash(uint8_t h[16], sparsecnst const *cnst, size_t nz,
 }
 
 
-// quick and dirty for debugg purposes
+// evaluate polz as an arbitrary sized integer
 void polz_eval(mpz_t output, const polz *t, int64_t coord, mpz_t const *mod)
 {
     mpz_t power, coeff, temp;
@@ -304,6 +316,7 @@ void print_int64_array(int64_t const *arr, size_t size)
     printf("\n");
 }
 
+// Sparse matrix in mpz form
 typedef struct {
     size_t len;
     size_t cap;
@@ -501,7 +514,6 @@ void polxvec_bitpack(uint8_t *r, polx const *a, size_t len)
 }
 
 
-
 // debug function for importing into python
 void polxvec_print_debug(char const *name, polx const *a, size_t len)
 {
@@ -515,8 +527,12 @@ void polxvec_print_debug(char const *name, polx const *a, size_t len)
     }
     printf("], dtype='object')\n");
     mpz_clears(tmp, mod, NULL);
-
 }
+
+// TODO: This way of structuring challenges made more sense when 
+// there were ELL regular constraints and ELL const constraints but e.g.
+// We don't need ELL copies of chi or omega only ELL2 of them, so maybe they should
+// get their own struct?
 typedef struct {
     struct {
         mpz_t *psi;
@@ -602,25 +618,25 @@ void prepare_challenge_hash(shake128incctx *shakectx, uint8_t *h, polx const *co
     free(hashbuf);
 }
 
-void get_round1_challenges(challenge *challs, uint8_t *h, polx const *commitment,  size_t n_challs, R1CSParams const *rp)
+void get_round1_challenges(challenge *challs, uint8_t *h, polx const *commitment, R1CSParams const *rp)
 {
     shake128incctx shakectx;
     prepare_challenge_hash(&shakectx, h, commitment, rp->m[0], 1);
 
-    for (size_t i = 0; i != n_challs; i++) {
+    for (size_t i = 0; i != ELL; i++) {
         for (size_t j = 0; j != rp->k; j++) {
             squeeze_mpz(challs[i].round1.psi[j], &shakectx);
         }
     }
 }
 
-void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment, size_t n_challs, R1CSParams const *rp)
+void get_round2_challenges(challenge *challs, uint8_t *h, polx const *commitment, R1CSParams const *rp)
 {
     shake128incctx shakectx;
     prepare_challenge_hash(&shakectx, h, commitment, rp->m[1], 2);
 
     // domain separation never hurt anyone
-    for (size_t i = 0; i != n_challs; i++) {
+    for (size_t i = 0; i != ELL; i++) {
         for (size_t j = 0; j != (3+ELL) * rp->k; j++) {
             squeeze_mpz(challs[i].round2.alpha[j], &shakectx);
         }
@@ -633,9 +649,15 @@ void get_round3_challenges(challenge *challs, uint8_t *h, polx const *commitment
     prepare_challenge_hash(&shakectx, h, commitment, rp->m[2], 3);
     uint64_t nonce = ((uint64_t) 1) << 16;
     //polz *z_vec = _aligned_alloc(64, ELL * sizeof *z_vec);
+    for (size_t i = 0; i != ELL; i++) {
+        polxvec_almostuniform(challs[i].round3.tau[0], rp->m[0] + rp->m[1] + rp->m[2], h, nonce++);
+    }
+
+    size_t omega_size = rp->g_bw*ELL + ceildiv(ELL*rp->v_bw, N) + ceildiv(ELL*(N-1)*rp->h_bw, N);
+
     poly *z_vec = _aligned_alloc(64, ELL * sizeof *z_vec);
-    for (size_t i = 0; i != n_challs; i++) {
-        polxvec_ternary(challs[i].round3.tau[0], rp->m[0] + rp->m[1] + rp->m[2] + rp->g_bw*ELL, h, nonce++);
+    for (size_t i = 0; i != ELL2; i++) {
+        polxvec_almostuniform(challs[i].round3.omega, omega_size, h, nonce++)
         // These challenges shouldn't be ternary, fix this!!!
         // Uniform challenges cause polx overflow representation in sparsecnst_check
         //polzvec_uniform(z_vec, ELL, h, nonce++);
@@ -708,8 +730,7 @@ void f_r1cs(prncplstmnt *st, mpz_sparsemat const *A, mpz_sparsemat const *B, mpz
     polx onex;
     polx_frompoly(&onex, &one);
 
-
-    mpz_t *scratch = new_mpz_array(MAX(st->n[0],st->n[1]));
+    mpz_t *scratch = new_mpz_array(MAX(rp->k,rp->n));
     for (size_t i = 0; i != ELL; i++) {
         challenge chall = challenges[i];
 
@@ -765,7 +786,7 @@ void f_r1cs(prncplstmnt *st, mpz_sparsemat const *A, mpz_sparsemat const *B, mpz
             polxvec_frommpzvec(st->cnst[i].phi[4+j], scratch, st->n[4+j]);
         }
     }
-    free_mpz_array(scratch, MAX(st->n[0],st->n[1]));
+    free_mpz_array(scratch, MAX(rp->n, rp->k));
 
 }
 
@@ -1081,7 +1102,7 @@ void check_carry_equations(polz const *gs_z, mpz_t const *carries, mpz_t const *
 // generate proof for Aw \circ Bw = Cw (mod 'mod')
 // T1,T2,T3 are commitment matrices.
 // A,B,C have dimension rp->k x rp->n
-void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, polx const *const *T1, polx const *const *T2, polx const *const *T3, mpz_t *w, mpz_t const mod, uint8_t *hashstate, R1CSParams const *rp)
+void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, polx const *const *T1, polx const *const *T2, polx const *const *T3, mpz_t *w, mpz_t const mod, uint8_t const *hashstate, R1CSParams const *rp)
 {
     //struct timespec start, end;
     //clock_gettime(CLOCK_MONOTONIC, &start);
@@ -1094,6 +1115,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polx *sx[NWITVECS] = {};
 
     init_r1cs_stmnt_wit(&st, &wt, sx, offsets, rp);
+    memcpy(st.h, hashstate, 16);
 
     // compute Aw Bw Cw, store contiguously
     mpz_t *mat_prods = new_mpz_array(offsets[4] - offsets[1]);
@@ -1128,9 +1150,9 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         polx_matmul_add(commitments, T1[i], sx[i], rp->m[0], st.n[i]);
     }
 
-    // TODO also hash public rp into hashstate at somepoint
+    // TODO also hash public rp into st.h at somepoint
     challenge *challenges = new_challenge_array(ELL, rp);
-    get_round1_challenges(challenges, hashstate, commitments, ELL, rp);
+    get_round1_challenges(challenges, st.h, commitments, ELL, rp);
 
     // ds[i] = psi[i] * Aw[i]
     size_t ds_len = offsets[4+ELL] - offsets[4];
@@ -1161,7 +1183,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
         polx_matmul_add(commitment2, T2[i], sx[4+i], rp->m[1], st.n[4+i]);
     }
 
-    get_round2_challenges(challenges, hashstate, commitment2, ELL, rp);
+    get_round2_challenges(challenges, st.h, commitment2, ELL, rp);
 
     // In principle, we'd do round 3 right now, but we need to compute the g_is
     // So we take a quick break to construct princplstmnt since we have to do that
@@ -1237,7 +1259,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     polx_matmul_add(commitment3, T3[1], sx[R1CSVECS+1], rp->m[2], st.n[R1CSVECS+1]);
 
     // Now that we have c3 = T3(g||g'||...||), we can generate the rest of the challenges
-    get_round3_challenges(challenges, hashstate, commitment3, ELL, rp);
+    get_round3_challenges(challenges, st.h, commitment3, ELL, rp);
 
     // Now we add the rest of the constraints
 
@@ -1254,7 +1276,6 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
 
 
-    memcpy(st.h, hashstate, 16);
     for (size_t i = 0; i != ELL; i++) {
         sparsecnst_hash(st.h, st.cnst + i, NWITVECS, st.n, 1);
     }
