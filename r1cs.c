@@ -44,6 +44,7 @@ typedef struct {
     int64_t G[N]; // Value guaranteed to make ith carry equation non-negative
     int64_t ac[N+1]; // Aux constants that "correct" for having added G[N] in carry equation
     int64_t carry_eqn_bound; // Largest value that could possibly arise from any carry equation
+    uint64_t eval_vec_len;
 } R1CSParams;
 
 uint64_t ceildiv(uint64_t a, uint64_t b)
@@ -123,11 +124,11 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
         }
         int64_t cur_eqn_bound = MAX(lhs_max - rhs_min, rhs_max - lhs_min);
         rp->carry_eqn_bound = MAX(cur_eqn_bound, rp->carry_eqn_bound);
-        printf("rp->carry_eqn_bound: %zu\n", significant_bits(rp->carry_eqn_bound));
     }
 
     int64_t q = zz_toint64(&modulus.q);
     assert(rp->carry_eqn_bound < q);
+    rp->eval_vec_len = ELL*rp->g_bw + ceildiv(ELL*rp->v_bw, N) + ceildiv(ELL*(N-1)*rp->h_bw, N);
 
 }
 
@@ -558,13 +559,12 @@ void init_challenges(challenges *challs, R1CSParams const *rp)
             challs->deltas[i][j] = challs->deltas[i][j-1] + rp->k;
         }
     }
-    size_t omega_size = rp->g_bw*ELL+ceildiv(rp->v_bw*ELL,N) + ceildiv(rp->h_bw*(N-1)*ELL, N);
-    challs->taus[0] = _aligned_alloc(64, (rp->m[0] + rp->m[1] + rp->m[2] + ELL2*omega_size) * sizeof (polx));
+    challs->taus[0] = _aligned_alloc(64, (rp->m[0] + rp->m[1] + rp->m[2] + ELL2*rp->eval_vec_len) * sizeof (polx));
     challs->taus[1] = challs->taus[0] + rp->m[0];
     challs->taus[2] = challs->taus[1] + rp->m[1];
     challs->omegas[0] = challs->taus[2] + rp->m[2];
     for (size_t i = 1; i != ELL2; i++) {
-        challs->omegas[i] = challs->omegas[i-1] + omega_size;
+        challs->omegas[i] = challs->omegas[i-1] + rp->eval_vec_len;
     }
 }
 
@@ -621,12 +621,11 @@ void get_round3_challenges(challenges *challs, uint8_t *h, polx const *commitmen
 {
     shake128incctx shakectx;
     uint64_t nonce = ((uint64_t) 1) << 16;
-    size_t omega_size = ELL*rp->g_bw + ceildiv(ELL*rp->v_bw,N) + ceildiv(ELL*(N-1)*rp->h_bw, N);
 
     prepare_challenge_hash(&shakectx, h, commitment, rp->m[2], 3);
 
     polxvec_challenge(challs->taus[0], rp->m[0] + rp->m[1] + rp->m[2], h, nonce++);
-    polxvec_almostuniform(challs->omegas[0], omega_size*ELL2, h, nonce++);
+    polxvec_almostuniform(challs->omegas[0], rp->eval_vec_len*ELL2, h, nonce++);
 
     //polx z_vec[ELL];
     poly z_vec[ELL];
@@ -690,7 +689,7 @@ void mpz_mod_vec(mpz_t *result, mpz_t const *a, mpz_t const mod, size_t len)
 
 uint64_t beta_squared(R1CSParams const *rp)
 {
-    return 128. / 30. * (((3+ELL)*rp->k+rp->n)*(N/2+3) + 2*ELL*rp->g_bw + 2*ceildiv(ELL*rp->v_bw, N) + 2*ceildiv((N-1)*ELL*rp->h_bw, N));
+    return 128. / 30. * (((3+ELL)*rp->k+rp->n)*(N/2+3) + 2*ELL*(N*rp->g_bw + rp->v_bw + (N-1)*rp->h_bw));
 }
 
 void f_r1cs(prncplstmnt *st, mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, challenges const *challs, mpz_t const mod)
@@ -997,7 +996,7 @@ void init_r1cs_stmnt_wit(prncplstmnt *st, witness *wt, polx **sx, size_t *offset
     }
 
     // Then we have our two binary vectors for the mod (2^d+1) evaluation
-    wit_lens[R1CSVECS] = wit_lens[R1CSVECS+1] = rp->g_bw * ELL + ceildiv(ELL*rp->v_bw, N) + ceildiv(ELL*(N-1)*rp->h_bw, N);
+    wit_lens[R1CSVECS] = wit_lens[R1CSVECS+1] = rp->eval_vec_len;
 
     size_t buflen = 0;
     for (size_t i = 0; i != NWITVECS; i++) {
@@ -1290,7 +1289,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 int main(void)
 {
     // placeholders
-    R1CSParams rp;
+    R1CSParams rp = {};
     new_r1cs_params(&rp, 1000,1000, (size_t [3]) {
         20,20,20
     });
@@ -1320,7 +1319,7 @@ int main(void)
 
     size_t t1_size = (3*rp.k+rp.n)*rp.m[0];
     size_t t2_size = rp.m[1] * ELL*rp.k;
-    size_t t3_size = rp.m[2] * (2*ELL * rp.g_bw + 2*ceildiv(ELL*rp.v_bw, N) + 2*ceildiv(ELL*(N-1)*rp.h_bw, N));
+    size_t t3_size = rp.m[2] * 2*rp.eval_vec_len;
 
     polx *comm = _aligned_alloc(64, (t1_size + t2_size + t3_size) * sizeof *comm);
 
@@ -1341,7 +1340,7 @@ int main(void)
     }
     polx const *T3[EVALVECS];
     T3[0] = T2[0] + rp.m[1] * ELL * rp.k;
-    T3[1] = T3[0] + (ELL*rp.g_bw + ceildiv(ELL*rp.v_bw, N) + ceildiv(ELL*(N-1)*rp.h_bw, N)) * rp.m[2];
+    T3[1] = T3[0] + rp.eval_vec_len * rp.m[2];
 
     r1cs_reduction(&A, &B, &C, T1, T2, T3, w, mod, seed, &rp);
     free_mpz_sparsemat(&A);

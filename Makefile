@@ -56,6 +56,9 @@ test_greyhound: test_greyhound.c $(SOURCES) $(HEADERS)
 r1cs: r1cs.c $(SOURCES) $(HEADERS)
 	$(CC) $(DBGFLAGS) r1cs.c $(SOURCES) -o $@ -lm -lgmp -g
 
+r1cs_opt: r1cs.c $(SOURCES) $(HEADERS)
+	$(CC) $(CFLAGS) r1cs.c $(SOURCES) -o $@ -lm -lgmp -g
+
 r1cs_new: r1cs_new.c $(SOURCES) $(HEADERS)
 	$(CC) $(DBGFLAGS) r1cs.c $(SOURCES) -o $@ -lm -lgmp -g
 
