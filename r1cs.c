@@ -90,6 +90,7 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
     rp->G[0] += rp->vnorm;
     rp->G[N-1] += 2*rp->vnorm;
 
+    rp->ac[N] = 0;
     // Aux consts
     for (size_t i = 0; i != N; i++) {
         rp->ac[N] += rp->G[i];
@@ -98,6 +99,7 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
     }
 
     // Sanity check, just to make sure q is big enough that the carry equations don't overflow
+    rp->carry_eqn_bound = 0;
     for (size_t i = 0; i != N; i++) {
         int64_t lhs_min = 0, lhs_max = 0;
         int64_t rhs_min = 0, rhs_max = 0;
@@ -121,6 +123,7 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
         }
         int64_t cur_eqn_bound = MAX(lhs_max - rhs_min, rhs_max - lhs_min);
         rp->carry_eqn_bound = MAX(cur_eqn_bound, rp->carry_eqn_bound);
+        printf("rp->carry_eqn_bound: %zu\n", significant_bits(rp->carry_eqn_bound));
     }
 
     int64_t q = zz_toint64(&modulus.q);
@@ -199,9 +202,9 @@ void poly_print(const poly *a, const char *fmt, ...)
 
 // update h with hash of constraints in sparsecnst
 // TODO update w/ sparse representation
-void sparsecnst_hash(uint8_t h[16], sparsecnst const *cnst, size_t nz,
-                     const size_t n[nz], size_t deg)
+void sparsecnst_hash(uint8_t h[16], sparsecnst const *cnst, size_t const *n)
 {
+    size_t deg = MAX(cnst->deg,1);
     polz t[deg];
     __attribute__((aligned(16)))
     uint8_t hashbuf[deg*N*QBYTES];
@@ -215,8 +218,8 @@ void sparsecnst_hash(uint8_t h[16], sparsecnst const *cnst, size_t nz,
     shake128_inc_absorb(&shakectx, hashbuf, deg*N*QBYTES);
 
     // TODO: SPARSE REPRESENTATION FIX
-    for (size_t j = 0; j != nz; j++) {
-        for (size_t k = 0; k != n[j]; k++) {
+    for (size_t j = 0; j != cnst->nz; j++) {
+        for (size_t k = 0; k != n[cnst->idx[j]]; k++) {
             polzvec_frompolxvec(t, cnst->phi[j] + k*deg, deg);
             polzvec_bitpack(hashbuf, t, deg);
             shake128_inc_absorb(&shakectx, hashbuf, deg*N*QBYTES);
@@ -1169,9 +1172,10 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     mpz_init(remainder);
     for (size_t i = 0; i != ELL; i++) {
         // Now we evaluate f_r1cs. Set st.cnst[i].nz to R1CSVECS for performance
+        size_t old_nz = st.cnst[i].nz;
         st.cnst[i].nz = R1CSVECS;
         sparsecnst_eval(gs + i, &st.cnst[i], sx, &wt);
-        st.cnst[i].nz = NWITVECS;
+        st.cnst[i].nz = old_nz;
         polx_eval(quotients[i], gs + i, 2, NULL);
         mpz_fdiv_qr(quotients[i], remainder, quotients[i], mod);
         assert(mpz_sgn(remainder) == 0);
@@ -1244,7 +1248,10 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
     memcpy(st.h, hashstate, 16);
     for (size_t i = 0; i != ELL; i++) {
-        sparsecnst_hash(st.h, st.cnst + i, NWITVECS, st.n, 1);
+        sparsecnst_hash(st.h, st.cnst + i, st.n);
+    }
+    for (size_t i = ELL; i != ELL+ELL2; i++) {
+        sparsecnst_hash(st.h, st.cnst + i, st.n);
     }
 
     print_prncplstmnt_pp(&st);
@@ -1284,7 +1291,7 @@ int main(void)
 {
     // placeholders
     R1CSParams rp;
-    new_r1cs_params(&rp, 100, 100, (size_t [3]) {
+    new_r1cs_params(&rp, 1000,1000, (size_t [3]) {
         20,20,20
     });
 
