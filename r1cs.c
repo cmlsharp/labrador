@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 
 #include <gmp.h>
 
@@ -71,6 +72,11 @@ int64_t zz_toint64(zz const *a)
 
 }
 
+uint64_t beta_squared(R1CSParams const *rp)
+{
+    return ceil(128. / 30. * (((3+ELL)*rp->k+rp->n)*(N/2. + 3) + 2*ELL*(N*rp->g_bw + rp->v_bw + (N-1)*rp->h_bw)));
+}
+
 void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
 {
     rp->k = k;
@@ -105,22 +111,23 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
         int64_t lhs_min = 0, lhs_max = 0;
         int64_t rhs_min = 0, rhs_max = 0;
         lhs_min += rp->G[i] - rp->gnorm;
-        lhs_max += rp->G[i] - rp->gnorm + (1 << rp->g_bw); // could probably be 2*gnorm instead which is tighter since g is constrained to be "correct" by other constraints
+        // could probably be 2*gnorm instead which is tighter since g is constrained to be "correct" by other constraints
+        lhs_max += rp->G[i] - rp->gnorm + (1l << rp->g_bw);
         rhs_min += rp->ac[i];
         rhs_max += rp->ac[i];
         if (i == 0) {
             rhs_min -= rp->vnorm;
-            rhs_max += (1 << rp->v_bw) - rp->vnorm;
-            rhs_max += 2*(1 << rp->h_bw);
+            rhs_max += (1l << rp->v_bw) - rp->vnorm;
+            rhs_max += 2*(1l << rp->h_bw);
         } else if (i == N-1) {
             rhs_min -= 2*rp->vnorm;
-            rhs_max += 2*((1 << rp->v_bw) - rp->vnorm);
-            lhs_max += 1 << rp->h_bw;
+            rhs_max += 2*((1l << rp->v_bw) - rp->vnorm);
+            lhs_max += 1l << rp->h_bw;
             rhs_min += 2*rp->ac[N];
             rhs_max += 2*rp->ac[N];
         } else {
-            lhs_max += 1 << rp->h_bw;
-            rhs_max += 2*(1 << rp->h_bw);
+            lhs_max += 1l << rp->h_bw;
+            rhs_max += 2*(1l << rp->h_bw);
         }
         int64_t cur_eqn_bound = MAX(lhs_max - rhs_min, rhs_max - lhs_min);
         rp->carry_eqn_bound = MAX(cur_eqn_bound, rp->carry_eqn_bound);
@@ -129,6 +136,10 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
     int64_t q = zz_toint64(&modulus.q);
     assert(rp->carry_eqn_bound < q);
     rp->eval_vec_len = ELL*rp->g_bw + ceildiv(ELL*rp->v_bw, N) + ceildiv(ELL*(N-1)*rp->h_bw, N);
+
+    uint64_t betasq = beta_squared(rp);
+    assert(betasq < (uint64_t) q);
+    assert(sqrt((rp->n + (3+ELL)*rp->k)*(N/2. + 3)*betasq) + betasq/2. < (double) q);
 
 }
 
@@ -146,7 +157,7 @@ void polz_print2(const polz *a)
     for (size_t i = 0; i != N; i++) {
         int64_t x = a->limbs[0].c[i];
         for (size_t j = 1; j != L; j++) {
-            x += a->limbs[j].c[i] * (((int64_t) 1) << (14*j));
+            x += a->limbs[j].c[i] * 1l << (14*j);
         }
         printf("%5ldx^%zu", x,i);
         if (i != N-1) {
@@ -620,7 +631,7 @@ void get_round2_challenges(challenges *challs, uint8_t *h, polx const *commitmen
 void get_round3_challenges(challenges *challs, uint8_t *h, polx const *commitment, R1CSParams const *rp)
 {
     shake128incctx shakectx;
-    uint64_t nonce = ((uint64_t) 1) << 16;
+    uint64_t nonce = 1ul << 16;
 
     prepare_challenge_hash(&shakectx, h, commitment, rp->m[2], 3);
 
@@ -687,10 +698,6 @@ void mpz_mod_vec(mpz_t *result, mpz_t const *a, mpz_t const mod, size_t len)
     }
 }
 
-uint64_t beta_squared(R1CSParams const *rp)
-{
-    return 128. / 30. * (((3+ELL)*rp->k+rp->n)*(N/2+3) + 2*ELL*(N*rp->g_bw + rp->v_bw + (N-1)*rp->h_bw));
-}
 
 void f_r1cs(prncplstmnt *st, mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsemat const *C, challenges const *challs, mpz_t const mod)
 {
