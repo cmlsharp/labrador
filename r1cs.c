@@ -23,9 +23,8 @@ const char *MOD_STR = "18446744073709551617";
 
 // number of repetitions (l in paper);
 #define ELL 8
-// Don't need as many cnst constraints because q is larger than smallest
-// prime factor of 2^64+1 (which is 18bits)
-#define ELL2 ((LOGQ+18*ELL-1)/LOGQ)
+// Number of repititons needed for Z_q constraints (128 bits of security)
+#define ELL2 ((LOGQ+128-1)/LOGQ)
 
 
 #define R1CSVECS (4+ELL)
@@ -140,7 +139,6 @@ void new_r1cs_params(R1CSParams *rp, size_t k, size_t n, size_t m[3])
     uint64_t betasq = beta_squared(rp);
     assert(betasq < (uint64_t) q);
     assert(sqrt((rp->n + (3+ELL)*rp->k)*(N/2. + 3)*betasq) + betasq/2. < (double) q);
-
 }
 
 
@@ -424,6 +422,7 @@ void polx_matmul(polx *result, polx const *matrix, polx const *vector, size_t ro
     polx_matmul_add(result, matrix, vector, rows, cols);
 }
 
+// todo: this can probably be replaced by polxvec_mul_extension which is probably more performant
 // result += matrix^T * vector
 void polx_matmul_trans_add(polx *result, polx const *matrix, polx const *vector, size_t rows, size_t cols)
 {
@@ -1295,10 +1294,9 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
 int main(void)
 {
-    // placeholders
     R1CSParams rp = {};
     new_r1cs_params(&rp, 1000,1000, (size_t [3]) {
-        20,20,20
+        20,20,20 // commitment sizes, not secure, just placeholders
     });
 
     gmp_randstate_t grand;
