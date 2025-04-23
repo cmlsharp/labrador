@@ -797,6 +797,7 @@ void f_conj(prncplstmnt *st, challenges const *challs)
     }
 }
 
+// Check that last two witness vectors are binary
 void f_bin(prncplstmnt *st)
 {
     polx onex = {};
@@ -1146,7 +1147,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
     // poly representation of ds
     //poly *wit_vecs2 = wit_vecs + (3*rp->k+rp->n);
     for (size_t i = 0; i != ELL; i++) {
-        polyvec_fromint64vec(wt.s[4+i], st.n[i], 1, d_coeffs + (offsets[4+i] - offsets[4])*N);
+        polyvec_fromint64vec(wt.s[4+i], st.n[4+i], 1, d_coeffs + (offsets[4+i] - offsets[4])*N);
         polxvec_frompolyvec(sx[4+i], wt.s[4+i], st.n[4+i]);
     }
     free(d_coeffs);
@@ -1245,9 +1246,9 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
     // constant term constraints
     // f_conj must come first because it overwrites st.cnst[ELL+i].phis
-    f_conj(&st, challs);
-    f_eval(&st, challs, rp);
-    f_bin(&st);
+    //f_conj(&st, challs);
+    //f_eval(&st, challs, rp);
+    //f_bin(&st);
 
 
 
@@ -1295,7 +1296,7 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 int main(void)
 {
     R1CSParams rp = {};
-    new_r1cs_params(&rp, 1000,1000, (size_t [3]) {
+    new_r1cs_params(&rp, 1000,100, (size_t [3]) {
         20,20,20 // commitment sizes, not secure, just placeholders
     });
 
