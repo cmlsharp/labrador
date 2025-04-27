@@ -1246,9 +1246,9 @@ void r1cs_reduction(mpz_sparsemat const *A, mpz_sparsemat const *B, mpz_sparsema
 
     // constant term constraints
     // f_conj must come first because it overwrites st.cnst[ELL+i].phis
-    //f_conj(&st, challs);
-    //f_eval(&st, challs, rp);
-    //f_bin(&st);
+    f_conj(&st, challs);
+    f_eval(&st, challs, rp);
+    f_bin(&st);
 
 
 
